@@ -53,9 +53,16 @@ STAGING="$OUTPUT_DIR/$TARBALL_NAME"
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
 
-# Get all enabled grammars
+# Get all enabled grammars with hasParser (portable, no yq dependency)
 get_enabled_grammars() {
-    yq -r '.[] | select(.enabled != false and .metadata.hasParser == true) | .language' "$REGISTRY"
+    awk '
+        /^- language:/ { lang=$3; enabled=1; has_parser=0 }
+        /^  enabled: false/ { enabled=0 }
+        /^  metadata:/ { in_meta=1 }
+        in_meta && /hasParser: true/ { has_parser=1 }
+        /^$/ || /^- / { if (lang && enabled && has_parser) print lang; in_meta=0 }
+        END { if (lang && enabled && has_parser) print lang }
+    ' "$REGISTRY"
 }
 
 included=0

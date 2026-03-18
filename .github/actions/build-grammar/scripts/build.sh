@@ -57,13 +57,22 @@ if [ -z "$CC" ]; then
     fi
 fi
 
-# Get all enabled grammars
+# Get all enabled grammars with hasParser (portable, no yq dependency)
 get_enabled_grammars() {
-    yq -r '.[] | select(.enabled != false and .metadata.hasParser == true) | .language' "$REGISTRY"
+    awk '
+        /^- language:/ { lang=$3; enabled=1; has_parser=0 }
+        /^  enabled: false/ { enabled=0 }
+        /^  metadata:/ { in_meta=1 }
+        in_meta && /hasParser: true/ { has_parser=1 }
+        /^$/ || /^- / { if (lang && enabled && has_parser) print lang; in_meta=0 }
+        END { if (lang && enabled && has_parser) print lang }
+    ' "$REGISTRY"
 }
 
 if $BUILD_ALL; then
-    mapfile -t LANGUAGES < <(get_enabled_grammars)
+    while IFS= read -r lang; do
+        LANGUAGES+=("$lang")
+    done < <(get_enabled_grammars)
 fi
 
 if [ ${#LANGUAGES[@]} -eq 0 ]; then
@@ -130,7 +139,7 @@ build_one() {
         case "$(uname -s)" in
             Darwin) strip -x "$output" 2>/dev/null ;;
             *) strip --strip-debug "$output" 2>/dev/null ;;
-        esac
+        esac || true
     fi
 }
 
