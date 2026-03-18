@@ -14,7 +14,6 @@ permissions:
 
 jobs:
   check-changes:
-    # Only needed for scheduled runs (tag push always releases)
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     outputs:
@@ -31,7 +30,9 @@ jobs:
 
   build:
     needs: check-changes
-    if: always() && (github.event_name == 'push' || needs.check-changes.outputs.shouldRelease == 'true')
+    if: >-
+      always() &&
+      (github.event_name == 'push' || needs.check-changes.outputs.shouldRelease == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -75,14 +76,21 @@ jobs:
           buildDir: build
           outputDir: release
 
-      - name: Upload release artifact
+      - name: Upload tarball
         uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.platform }}
           path: release/*.tar.gz
 
+      - name: Upload checksum
+        uses: actions/upload-artifact@v7
+        with:
+          name: checksum-${{ matrix.platform }}
+          path: release/tree-sitter-grammars.sha256
+
   validate:
     needs: build
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -117,12 +125,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download all release artifacts
+      - name: Download all release tarballs
         uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: release/
           merge-multiple: true
+
+      - name: Download all checksums
+        uses: actions/download-artifact@v8
+        with:
+          pattern: checksum-*
+          path: /tmp/checksums/
+
+      - name: Merge checksums
+        run: cat /tmp/checksums/*/tree-sitter-grammars.sha256 > release/tree-sitter-grammars.sha256
 
       - name: Create release
         uses: ./.github/actions/create-release
