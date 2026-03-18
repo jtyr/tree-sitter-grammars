@@ -41,7 +41,9 @@ get_validatable_grammars() {
 }
 
 if $VALIDATE_ALL; then
-    mapfile -t LANGUAGES < <(get_validatable_grammars)
+    while IFS= read -r lang; do
+        LANGUAGES+=("$lang")
+    done < <(get_validatable_grammars)
 fi
 
 if [ ${#LANGUAGES[@]} -eq 0 ]; then
