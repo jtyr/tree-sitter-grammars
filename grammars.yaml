@@ -3910,8 +3910,9 @@
 
 - language: stan
   url: https://github.com/WardBrian/tree-sitter-stan
-  ref: v0.2.9
-  generate: true
+  ref: v0.3.1
+  path: grammars/stan
+  queryPath: queries
   metadata:
     hasParser: true
     hasHighlights: true
