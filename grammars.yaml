@@ -3911,6 +3911,7 @@
 - language: stan
   url: https://github.com/WardBrian/tree-sitter-stan
   ref: v0.2.9
+  generate: true
   metadata:
     hasParser: true
     hasHighlights: true
