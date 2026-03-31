@@ -1520,7 +1520,17 @@
 - language: gotmpl
   url: https://github.com/ngalaiko/tree-sitter-go-template
   branch: master
-  ref: 04270cd3512e2c7de0c5f2823725d7b0c4c01fda
+  ref: aa71f63de226c5592dfbfc1f29949522d7c95fac
+  metadata:
+    hasParser: true
+    hasHighlights: true
+    abi: 15
+
+- language: gotmpl
+  url: https://github.com/zellio/tree-sitter-gotmpl
+  ref: 5c91dafb003f4a63ff37853c958fc622fbf436e6
+  enabled: false
+  note: Less mature alternative (1 star, single commit, May 2025); ngalaiko variant preferred for community adoption and active maintenance
   metadata:
     hasParser: true
     hasHighlights: true
@@ -2476,6 +2486,18 @@
   url: https://github.com/tree-sitter-grammars/tree-sitter-markdown
   ref: v0.5.3
   path: tree-sitter-markdown
+  metadata:
+    hasParser: true
+    hasScanner: true
+    hasHighlights: true
+    hasInjections: true
+    gitTags: true
+    abi: 15
+
+- language: markdown_inline
+  url: https://github.com/tree-sitter-grammars/tree-sitter-markdown
+  ref: v0.5.3
+  path: tree-sitter-markdown-inline
   metadata:
     hasParser: true
     hasScanner: true
