@@ -30,6 +30,8 @@ All grammars are defined in `grammars.yaml`. Each entry specifies:
   # Optional fields (omit when default):
   # name: python         # tree_sitter_<name>() symbol, omit if same as language
   # path: .              # subdirectory for monorepos, omit if root
+  # queryPath: queries   # query files location (relative to repo root), for
+  #                      # monorepos where queries are not under path/queries/
   # branch: main         # omit if main, specify for master or other branches
   # generate: true       # needs tree-sitter generate (no parser.c committed)
   # extraFiles: []       # extra headers needed for compilation

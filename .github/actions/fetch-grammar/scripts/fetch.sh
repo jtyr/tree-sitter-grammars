@@ -47,20 +47,22 @@ parse_grammar() {
         ((.extraFiles // [] | join(\",\")) | select(length > 0) // \"-\") + \"|\" +
         ((.generate // false) | tostring) + \"|\" +
         (((.metadata.hasParser // false) or (.metadata.hasScanner // false)) | not | tostring) + \"|\" +
-        ((.ignoreFiles // [] | join(\",\")) | select(length > 0) // \"-\")
+        ((.ignoreFiles // [] | join(\",\")) | select(length > 0) // \"-\") + \"|\" +
+        (.queryPath // \"-\")
     " "$REGISTRY"
 }
 
 fetch_entry() {
     local lang=$1
-    local url ref path name _branch extra_files needs_generate queries_only ignored_files
-    IFS='|' read -r url ref path name _branch extra_files needs_generate queries_only ignored_files
+    local url ref path name _branch extra_files needs_generate queries_only ignored_files query_path
+    IFS='|' read -r url ref path name _branch extra_files needs_generate queries_only ignored_files query_path
 
     # Replace placeholder '-' with empty string
     [ "$path" = "-" ] && path=""
     [ "$name" = "-" ] && name=""
     [ "$extra_files" = "-" ] && extra_files=""
     [ "$ignored_files" = "-" ] && ignored_files=""
+    [ "$query_path" = "-" ] && query_path=""
 
     if [ "$queries_only" = "true" ]; then
         echo "Fetching $lang queries from $url (ref: $ref)"
@@ -168,9 +170,11 @@ fetch_entry() {
     fi
 
     # Copy query files (only create directory if .scm files exist)
-    # For queries-only entries, .scm files are directly in $src_root
+    # queryPath overrides the default queries location (for monorepos)
     local queries_dir="$src_root/queries"
-    if [ "$queries_only" = "true" ]; then
+    if [ -n "$query_path" ]; then
+        queries_dir="$tmpdir/repo/$query_path"
+    elif [ "$queries_only" = "true" ]; then
         queries_dir="$src_root"
     fi
     if [ "$queries_only" != "true" ]; then
