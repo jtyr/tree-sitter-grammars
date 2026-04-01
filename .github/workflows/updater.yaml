@@ -14,7 +14,16 @@ jobs:
   check-updates:
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Check for upstream updates
         id: check
@@ -30,6 +39,7 @@ jobs:
         if: steps.check.outputs.hasUpdates == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ steps.app-token.outputs.token }}
           commit-message: "Update grammars: ${{ steps.check.outputs.updated }}"
           title: "Update grammars: ${{ steps.check.outputs.updated }}"
           body: |
