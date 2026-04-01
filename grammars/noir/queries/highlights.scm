@@ -2,7 +2,7 @@
 
 ; Assume all-caps names are constants
 ((identifier) @constant
- (#match? @constant "^[A-Z][A-Z\\d_]+$'"))
+ (#match? @constant "^[A-Z][A-Z\\d_]+$"))
 
 ; types
 (generic_type) @type
@@ -40,9 +40,6 @@
 "{" @punctuation.bracket
 "}" @punctuation.bracket
 
-(generic
-  "<" @punctuation.bracket
-  ">" @punctuation.bracket)
 (generic
   "<" @punctuation.bracket
   ">" @punctuation.bracket)
