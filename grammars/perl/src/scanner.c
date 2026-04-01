@@ -69,6 +69,8 @@ enum TokenType {
   TOKEN_NO_INTERP_WHITESPACE_ZW,
   /* zero-width high priority token */
   TOKEN_NONASSOC,
+  /* synthetic close paren for error recovery */
+  TOKEN_RECOVER_PAREN_CLOSE,
   /* error condition is always last */
   TOKEN_ERROR
 };
@@ -218,7 +220,7 @@ static void lexerstate_add_heredoc(LexerState *state, TSPString *delim, bool int
 }
 
 static void lexerstate_finish_heredoc(LexerState *state) {
-  state->heredoc_delim.length = 0;
+  state->heredoc_delim = (TSPString){0};
   state->heredoc_state = HEREDOC_NONE;
 }
 
@@ -381,7 +383,7 @@ bool tree_sitter_perl_external_scanner_scan(void *payload, TSLexer *lexer,
   if (valid_symbols[TOKEN_HEREDOC_MIDDLE] && !is_ERROR) {
     DEBUG("Beginning heredoc contents\n", 0);
     if (state->heredoc_state != HEREDOC_CONTINUE) {
-      TSPString line;
+      TSPString line = {0};
       // read as many lines as we can
       while (!lexer->eof(lexer)) {
         tspstring_reset(&line);
@@ -452,7 +454,7 @@ bool tree_sitter_perl_external_scanner_scan(void *payload, TSLexer *lexer,
     }
   }
 
-  if (iswspace(c) && valid_symbols[TOKEN_NO_INTERP_WHITESPACE_ZW]) {
+  if (!is_ERROR && iswspace(c) && valid_symbols[TOKEN_NO_INTERP_WHITESPACE_ZW]) {
     TOKEN(TOKEN_NO_INTERP_WHITESPACE_ZW);
   }
   skip_ws_to_eol(lexer);
@@ -506,6 +508,16 @@ bool tree_sitter_perl_external_scanner_scan(void *payload, TSLexer *lexer,
   // CTRL-Z must be here, b/c it cares about whitespace
   if (c == 26 && valid_symbols[TOKEN_CTRL_Z]) TOKEN(TOKEN_CTRL_Z);
 
+  // Close unclosed parens before inserting semicolons — the parser needs
+  // ')' before it can accept ';'.  Only fires inside function/method call
+  // argument lists (the only grammar rules that use _RECOVER_PAREN_CLOSE).
+  if (!is_ERROR && valid_symbols[TOKEN_RECOVER_PAREN_CLOSE]) {
+    if (c == '}' || c == ';' || lexer->eof(lexer)) {
+      DEBUG("Fake RECOVER_PAREN_CLOSE before '%c'\n", c);
+      TOKEN(TOKEN_RECOVER_PAREN_CLOSE);
+    }
+  }
+
   if (valid_symbols[PERLY_SEMICOLON]) {
     if (c == '}' || lexer->eof(lexer)) {
       // do a PERLY_SEMICOLON unless we're in brace autoquoting
@@ -536,7 +548,7 @@ bool tree_sitter_perl_external_scanner_scan(void *payload, TSLexer *lexer,
 
   }
 
-  if (valid_symbols[TOKEN_DOLLAR_IDENT_ZW]) {
+  if (!is_ERROR && valid_symbols[TOKEN_DOLLAR_IDENT_ZW]) {
     // false on word chars, another dollar or {
     if (!isidcont(c) && !tsp_strchr("${", c)) {
       if (c == ':') {
@@ -648,7 +660,7 @@ bool tree_sitter_perl_external_scanner_scan(void *payload, TSLexer *lexer,
     bool should_indent = false;
     bool should_interpolate = true;
 
-    TSPString delim;
+    TSPString delim = {0};
     tspstring_reset(&delim);
     if (!skipped_whitespace) {
       if (c == '~') {
@@ -904,7 +916,7 @@ bool tree_sitter_perl_external_scanner_scan(void *payload, TSLexer *lexer,
       // operator followed by a comment as the quote char
       if (c == '#') {
         ADVANCE_C;
-        while (lexer->get_column(lexer)) ADVANCE_C;
+        while (lexer->get_column(lexer) && !lexer->eof(lexer)) ADVANCE_C;
       }
       if (lexer->eof(lexer)) return false;
       // TODO - in theory there could be POD here that we needa skip over (EYES ROLL)
