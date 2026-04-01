@@ -97,3 +97,21 @@ jobs:
         with:
           languages: ${{ needs.detect-changes.outputs.languages }}
           buildDir: build
+
+  auto-approve:
+    permissions:
+      pull-requests: write
+    if: >-
+      always() &&
+      github.event.pull_request.user.login == 'jtyr-ts-grammars-updater[bot]' &&
+      needs.lint.result == 'success' &&
+      (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    needs:
+      - lint
+      - validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Approve bot PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr review ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --approve
