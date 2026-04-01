@@ -85,7 +85,7 @@
 - language: arduino
   url: https://github.com/tree-sitter-grammars/tree-sitter-arduino
   branch: master
-  ref: 53eb391da4c6c5857f8defa2c583c46c2594f565
+  ref: 11dd46c9ae25135c473c0003a133bb06a484af0c
   metadata:
     hasParser: true
     hasScanner: true
@@ -96,7 +96,7 @@
 - language: asciidoc
   url: https://github.com/cathaysia/tree-sitter-asciidoc
   branch: master
-  ref: 12ea38e6cf4b2b041f3fd493ea3592aa439a46f5
+  ref: 8b7488e4a92133c9adacc49e97652007e1b6621a
   path: tree-sitter-asciidoc
   metadata:
     hasParser: true
@@ -204,7 +204,7 @@
 - language: beancount
   url: https://github.com/polarmutex/tree-sitter-beancount
   branch: master
-  ref: d7a03a7506fbbbc4b16a9a2054ff7c2b337744b8
+  ref: 429cff869513cf9e34a2cf604fbfaaedc467e809
   metadata:
     hasParser: true
     hasScanner: true
@@ -438,7 +438,7 @@
 
 - language: cfengine
   url: https://github.com/olehermanse/tree-sitter-cfengine
-  ref: 0ba495983fc10828efd92f9d08ec3a9659f92e02
+  ref: 04607817eea5b0f05b35de517a2453e8e23c971b
   metadata:
     hasParser: true
     abi: 15
@@ -456,7 +456,7 @@
 - language: chuck
   url: https://github.com/tymbalodeon/tree-sitter-chuck
   branch: trunk
-  ref: b68b2e0fec50756de036844d5ae190b1d20144a3
+  ref: 68fb7bdba480915d87177feaa5593a666c0bb602
   metadata:
     hasParser: true
     hasHighlights: true
@@ -679,7 +679,7 @@
 
 - language: cue
   url: https://github.com/eonpatapon/tree-sitter-cue
-  ref: 20bb9195dac00b64c00ee494812abf3bf76f4181
+  ref: a9e713c2fa2da69de03ceb799807043420ca7c4b
   metadata:
     hasParser: true
     hasScanner: true
@@ -1145,7 +1145,7 @@
 
 - language: fluentbit
   url: https://github.com/sh-cho/tree-sitter-fluentbit
-  ref: 2f7b30040de1121631afe247ab606229471e826e
+  ref: c377d41e718270819362998ca102f9565fd2e38a
   metadata:
     hasParser: true
     hasHighlights: true
@@ -1186,7 +1186,7 @@
 - language: fortran
   url: https://github.com/stadelmanma/tree-sitter-fortran
   branch: master
-  ref: 2880b7aab4fb7cc618de1ef3d4c6d93b2396c031
+  ref: be30d90dc7dfa4080b9c4abed3f400c9163a88df
   metadata:
     hasParser: true
     hasScanner: true
@@ -1701,7 +1701,7 @@
 
 - language: heex
   url: https://github.com/connorlay/tree-sitter-heex
-  ref: 3968d6e20b3c4cc234f339eddd6b7d118516e281
+  ref: 5842537f734d7c12685bf27d6005313e3e5a47a0
   metadata:
     hasParser: true
     hasHighlights: true
@@ -1868,7 +1868,7 @@
 - language: idl
   url: https://github.com/cathaysia/tree-sitter-idl
   branch: master
-  ref: 57c4ba057415ebe8e184fb11716c985dc3545e5e
+  ref: fb65762a13538b397e41a5fc1e9564c9df841410
   metadata:
     hasParser: true
     hasHighlights: true
@@ -1969,7 +1969,7 @@
 - language: janet_simple
   url: https://github.com/sogaiu/tree-sitter-janet-simple
   branch: master
-  ref: d183186995204314700be3e9e0a48053ea16b350
+  ref: 3c1bdcfff374138da03a1db25c75efce623910fe
   metadata:
     hasParser: true
     hasScanner: true
@@ -1988,7 +1988,7 @@
 
 - language: javadoc
   url: https://github.com/rmuir/tree-sitter-javadoc
-  ref: 42c9bc340c90ec15ed96eb4314269e8249376be9
+  ref: e2f56b4d0df08f6ed5df8bae266f9e75b340a9ab
   metadata:
     hasParser: true
     hasScanner: true
@@ -2102,7 +2102,7 @@
 
 - language: just
   url: https://github.com/IndianBoy42/tree-sitter-just
-  ref: d9da862c156020c1a83d3c6ccdda32be6d8a5d4a
+  ref: 5685543a6e64f66335e25518c9ae8ffa1dae3d01
   metadata:
     hasParser: true
     hasScanner: true
@@ -2265,7 +2265,7 @@
 - language: ledger
   url: https://github.com/cbarrete/tree-sitter-ledger
   branch: master
-  ref: 2edce0372079896c810c7b218587f2b3fbb7a086
+  ref: 22a1ab8195c1f6e808679f803007756fe7638c6f
   metadata:
     hasParser: true
     abi: 14
@@ -2312,7 +2312,7 @@
 
 - language: liquid
   url: https://github.com/hankthetank27/tree-sitter-liquid
-  ref: fa11c7ba45038b61e03a8a00ad667fb5f3d72088
+  ref: 9566ca79911052919fce09d26f1f655b5e093857
   metadata:
     hasParser: true
     hasScanner: true
@@ -2439,7 +2439,7 @@
 
 - language: magik
   url: https://github.com/krn-robin/tree-sitter-magik
-  ref: 297345ebd36fa9c1a3cfd1b22293e272c765a8a4
+  ref: f288161c5f64f0582386e54d90cf1a720520b55d
   metadata:
     hasParser: true
     hasHighlights: true
@@ -2576,7 +2576,7 @@
 - language: mlir
   url: https://github.com/artagnon/tree-sitter-mlir
   branch: master
-  ref: 90d41fd327a8a6ded2fb366909ea86d8e31392ea
+  ref: 031e5c10c7165bddb172801915bf70fd5eb97b5f
   metadata:
     hasParser: true
     hasHighlights: true
@@ -2668,7 +2668,7 @@
 
 - language: nim
   url: https://github.com/alaviss/tree-sitter-nim
-  ref: 9b4ede21a6ca866d29263f6b66c070961bc622b4
+  ref: 3878440d9398515ae053c6f6024986e69868bb74
   metadata:
     hasParser: true
     hasScanner: true
@@ -2706,7 +2706,7 @@
 
 - language: noir
   url: https://github.com/hhamud/tree-sitter-noir
-  ref: 4cc223f677d72db319f1c8331b65a9564805c7bf
+  ref: 89cc4dbbfbc4ab3fadf75bf8f5c54d6a5f8ce682
   metadata:
     hasParser: true
     hasScanner: true
@@ -2811,7 +2811,7 @@
 - language: ocaml
   url: https://github.com/tree-sitter/tree-sitter-ocaml
   branch: master
-  ref: 3ef7c00b29e41e3a0c1d18e82ea37c64d72b93fc
+  ref: 5a979b3ec7f1fe990b8e8c4412294a0cf7228e45
   path: grammars/ocaml
   metadata:
     hasParser: true
@@ -2935,7 +2935,7 @@
 - language: perl
   url: https://github.com/tree-sitter-perl/tree-sitter-perl
   branch: master
-  ref: ad74e6db234c35d537de9358799a8e0cc4f5dee0
+  ref: 8917c6e94b30f30670f008979309e2cbfc54400f
   generate: true
   metadata:
     hasParser: true
@@ -2958,7 +2958,7 @@
 - language: php
   url: https://github.com/tree-sitter/tree-sitter-php
   branch: master
-  ref: 015ce839db5ae9ceda763bf12e071867fbe8cc89
+  ref: 3f2465c217d0a966d41e584b42d75522f2a3149e
   path: php
   metadata:
     hasParser: true
@@ -3002,7 +3002,7 @@
 
 - language: pkl
   url: https://github.com/apple/tree-sitter-pkl
-  ref: 7c8a0d15d83c1a436e91277d5023340f1ae5726b
+  ref: f5beed1da8e5fc856a1a11e29a929d0b7cdcfe3c
   metadata:
     hasParser: true
     hasScanner: true
@@ -3037,7 +3037,7 @@
 
 - language: pod
   url: https://github.com/tree-sitter-perl/tree-sitter-pod
-  ref: 71244084e61c9bb17b1730caefc232dd981b45c4
+  ref: 57c606aa3373ba876d44113d13fe7bdc2c060723
   generate: true
   metadata:
     hasParser: true
@@ -3467,7 +3467,7 @@
 - language: robot
   url: https://github.com/Hubro/tree-sitter-robot
   branch: master
-  ref: 6788635caa4139d130526d449bc0fec781b44835
+  ref: 0f010f439e7873db42d3aabae8a48a8f61a89910
   metadata:
     hasParser: true
     hasHighlights: true
@@ -3565,7 +3565,7 @@
 - language: rust
   url: https://github.com/tree-sitter/tree-sitter-rust
   branch: master
-  ref: 261b20226c04ef601adbdf185a800512a5f66291
+  ref: 77a3747266f4d621d0757825e6b11edcbf991ca5
   metadata:
     hasParser: true
     hasScanner: true
@@ -3892,7 +3892,7 @@
 
 - language: ssh_client_config
   url: https://github.com/metio/tree-sitter-ssh-client-config
-  ref: 9be4f79b69559c3f3522386a05d276f2771c0a64
+  ref: 7d1b8d2d9a645fc4e8a447a0356d1da0af0b0efa
   metadata:
     hasParser: true
     hasHighlights: true
@@ -3964,7 +3964,7 @@
 
 - language: supercollider
   url: https://github.com/madskjeldgaard/tree-sitter-supercollider
-  ref: e2d1480de0a62cd53f81645cb39bc1f3fa2dce5a
+  ref: 2b03ff49dd19b046add072d0861c4d1ca8a384c8
   metadata:
     hasParser: true
     hasScanner: true
@@ -4045,7 +4045,7 @@
 
 - language: swift
   url: https://github.com/alex-pinkus/tree-sitter-swift
-  ref: 30e18c7b0210b33ffd6e8a7028e170a9dc90825b
+  ref: 50f2735c48adbbf06c01c37d151f73c9d9dadc6a
   generate: true
   metadata:
     hasParser: true
