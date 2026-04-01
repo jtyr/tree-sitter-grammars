@@ -438,6 +438,7 @@
 | [turtle](https://github.com/nvim-treesitter/nvim-treesitter/tree/2b50ab5ccbcd9e5708deb351308edd738adbf84c) | :x: | :x: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: | N/A |
 | [twig](https://github.com/gbprod/tree-sitter-twig/tree/7195ee573ab5c3b3bb0e91b042e6f83ac1b11104) | :white_check_mark: | :x: | :white_check_mark: | :x: | :white_check_mark: | :x: | :x: | :x: | 14 |
 | ~~[twig](https://github.com/kaermorchen/tree-sitter-twig/tree/58be9624ef8cf37b966b6b999e312cf96ffc8f15)~~ | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: | :white_check_mark: | :x: | :x: | :x: | 14 |
+| [typescript](https://github.com/tree-sitter/tree-sitter-typescript/tree/75b3874edb2dc714fb1fd77a32013d0f8699989f) | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: | :white_check_mark: | 14 |
 | [typst](https://github.com/SeniorMars/tree-sitter-typst/tree/2e66ef4b798a26f0b82144143711f3f7a9e8ea35) | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: | :x: | :x: | :x: | 14 |
 | ~~[typst](https://github.com/uben0/tree-sitter-typst/tree/46cf4ded12ee974a70bf8457263b67ad7ee0379d)~~ | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: | :x: | :x: | :x: | 14 |
 | [udev](https://github.com/tree-sitter-grammars/tree-sitter-udev/tree/2fcb563a4d56a6b8e8c129252325fc6335e4acbf) | :white_check_mark: | :x: | :white_check_mark: | :x: | :white_check_mark: | :x: | :x: | :white_check_mark: | 15 |
@@ -496,9 +497,9 @@
 
 | Metric | Count |
 |--------|-------|
-| Total entries | 489 |
-| Enabled | 424 |
+| Total entries | 490 |
+| Enabled | 425 |
 | Disabled | 65 |
-| Unique languages | 370 |
-| With highlights | 336 |
+| Unique languages | 371 |
+| With highlights | 337 |
 | Queries from [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) | 54 |
