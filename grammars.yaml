@@ -96,7 +96,7 @@
 - language: asciidoc
   url: https://github.com/cathaysia/tree-sitter-asciidoc
   branch: master
-  ref: 8b7488e4a92133c9adacc49e97652007e1b6621a
+  ref: 27685d3d1fcec9ea658681d2c997f109a2c2f080
   path: tree-sitter-asciidoc
   metadata:
     hasParser: true
@@ -725,7 +725,7 @@
 - language: desktop
   url: https://github.com/ValdezFOmar/tree-sitter-desktop
   branch: master
-  ref: 58e2ae16828d20889a36e657d728d901b4de47ec
+  ref: 954da7259e0f6c3bb4f811fddce11eb5ac94d9f6
   metadata:
     hasParser: true
     abi: 15
@@ -884,7 +884,7 @@
 
 - language: editorconfig
   url: https://github.com/ValdezFOmar/tree-sitter-editorconfig
-  ref: 63f104dab268a25237f773323c172a4a380a00e1
+  ref: bfd74395e393f56ba58db953458b346f02d6f7b2
   metadata:
     hasParser: true
     hasScanner: true
@@ -1352,7 +1352,7 @@
 
 - language: gleam
   url: https://github.com/gleam-lang/tree-sitter-gleam
-  ref: 0bb1b0ae1a3555180ae7b0004851da747fc230d1
+  ref: 0153f8b875cd02034b553f3a84a2f5ee67a80364
   metadata:
     hasParser: true
     hasScanner: true
@@ -1988,7 +1988,7 @@
 
 - language: javadoc
   url: https://github.com/rmuir/tree-sitter-javadoc
-  ref: e2f56b4d0df08f6ed5df8bae266f9e75b340a9ab
+  ref: cf8570c38321bbb31b429e47e870fc89ae1f74ed
   metadata:
     hasParser: true
     hasScanner: true
@@ -2312,7 +2312,7 @@
 
 - language: liquid
   url: https://github.com/hankthetank27/tree-sitter-liquid
-  ref: 9566ca79911052919fce09d26f1f655b5e093857
+  ref: e45dbac8c5fa95b1f0e00e7e0c04bc8855823391
   metadata:
     hasParser: true
     hasScanner: true
@@ -2576,7 +2576,7 @@
 - language: mlir
   url: https://github.com/artagnon/tree-sitter-mlir
   branch: master
-  ref: 031e5c10c7165bddb172801915bf70fd5eb97b5f
+  ref: 60d1feeabf01f730e6b8500e23918d9972772baf
   metadata:
     hasParser: true
     hasHighlights: true
@@ -3892,7 +3892,7 @@
 
 - language: ssh_client_config
   url: https://github.com/metio/tree-sitter-ssh-client-config
-  ref: 7d1b8d2d9a645fc4e8a447a0356d1da0af0b0efa
+  ref: c01c35b4aacb3b1864fce2f3b492eb8baafd42a5
   metadata:
     hasParser: true
     hasHighlights: true
@@ -4115,7 +4115,7 @@
 
 - language: t32
   url: https://codeberg.org/xasc/tree-sitter-t32
-  ref: v7.2.5
+  ref: v7.2.6
   metadata:
     hasParser: true
     hasScanner: true
@@ -4833,7 +4833,7 @@
 - language: xresources
   url: https://github.com/ValdezFOmar/tree-sitter-xresources
   branch: master
-  ref: 5e90968c2e822ae205066e44de6d2aadd61f63cf
+  ref: 586e9a578f473bf39b17d302d7f33f1777652967
   metadata:
     hasParser: true
     abi: 15
@@ -4876,7 +4876,7 @@
 
 - language: yuck
   url: https://github.com/tree-sitter-grammars/tree-sitter-yuck
-  ref: e877f6ade4b77d5ef8787075141053631ba12318
+  ref: 6c60112b3b3e739fb1ca4a8ea4bea2b6ffe11318
   metadata:
     hasParser: true
     hasScanner: true
@@ -4889,7 +4889,7 @@
 
 - language: zeek
   url: https://github.com/zeek/tree-sitter-zeek
-  ref: v0.2.11
+  ref: v0.2.12
   metadata:
     hasParser: true
     hasHighlights: true
