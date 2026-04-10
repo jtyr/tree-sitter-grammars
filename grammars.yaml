@@ -277,6 +277,8 @@
   url: https://github.com/tree-sitter-grammars/tree-sitter-bitbake
   branch: master
   ref: a5d04fdb5a69a02b8fa8eb5525a60dfb5309b73b
+  enabled: false
+  note: Upstream highlights.scm references non-existent node type (interpolation) at pinned ref
   metadata:
     hasParser: true
     hasScanner: true
@@ -1719,6 +1721,8 @@
   url: https://github.com/winston0410/tree-sitter-hjson
   branch: master
   ref: 02fa3b79b3ff9a296066da6277adfc3f26cbc9e0
+  enabled: false
+  note: Incompatible with current tree-sitter CLI, requires tree-sitter-jsonc npm package which is not on npm registry
   metadata:
     hasParser: true
     hasHighlights: true
@@ -1941,6 +1945,8 @@
   url: https://github.com/nverno/tree-sitter-jack
   branch: master
   ref: 1a617413ea92c237bff4cbe7fa67eb3bf4425596
+  enabled: false
+  note: Incompatible with current tree-sitter CLI, generation fails
   metadata:
     hasParser: true
     abi: 14
@@ -1948,6 +1954,8 @@
 - language: jakt
   url: https://github.com/demizer/tree-sitter-jakt
   ref: e67a5de093cab9eb79be721bf39bc9115193534a
+  enabled: false
+  note: Incompatible with current tree-sitter CLI, undefined rule field_identifier
   metadata:
     hasParser: true
     hasScanner: true
@@ -2020,6 +2028,8 @@
   url: https://github.com/nitreojs/tree-sitter-jpp
   branch: lord
   ref: 21284b6f1ea0ee84f10fd80d11a2b765578eafbe
+  enabled: false
+  note: Incompatible with current tree-sitter CLI, unsupported regex flags
   metadata:
     hasParser: true
     abi: 14
@@ -2603,6 +2613,8 @@
   url: https://github.com/tree-sitter-grammars/tree-sitter-move
   branch: saving
   ref: b8ca25518749be10562455fd081a3dab30b93b8b
+  enabled: false
+  note: Incompatible with current tree-sitter CLI, generation fails
   metadata:
     hasParser: true
     abi: 14
@@ -3183,6 +3195,8 @@
 - language: prql
   url: https://github.com/PRQL/tree-sitter-prql
   ref: 09e158cd3650581c0af4c49c2e5b10c4834c8646
+  enabled: false
+  note: Upstream highlights.scm references non-existent node type (integer) at pinned ref
   metadata:
     hasParser: true
     hasHighlights: true
@@ -3383,6 +3397,8 @@
   url: https://github.com/tree-sitter-grammars/tree-sitter-re2c
   branch: master
   ref: c18a3c2f4b6665e35b7e50d6048ea3cff770c572
+  enabled: false
+  note: Upstream highlights.scm references non-existent node type (linedir) at pinned ref
   metadata:
     hasParser: true
     hasHighlights: true
@@ -3862,6 +3878,8 @@
 - language: sql_bigquery
   url: https://github.com/takegue/tree-sitter-sql-bigquery
   ref: c0c4f0ed7b87846cb1be19df5d638ca227a9fe41
+  enabled: false
+  note: Upstream highlights.scm references non-existent string token "_PARTITIONTIME" at pinned ref
   metadata:
     hasParser: true
     hasScanner: true
@@ -4411,6 +4429,8 @@
 - language: typst
   url: https://github.com/SeniorMars/tree-sitter-typst
   ref: 2e66ef4b798a26f0b82144143711f3f7a9e8ea35
+  enabled: false
+  note: Incompatible with current tree-sitter CLI, invalid token.immediate usage
   metadata:
     hasParser: true
     hasScanner: true
@@ -4454,6 +4474,8 @@
 - language: usd
   url: https://github.com/ColinKennedy/tree-sitter-usd
   ref: v0.5.0
+  enabled: false
+  note: Incompatible with current tree-sitter CLI, generation fails
   metadata:
     hasParser: true
     hasHighlights: true
@@ -4689,6 +4711,8 @@
   url: https://github.com/wasm-lsp/tree-sitter-wasm
   ref: 2ca28a9f9d709847bf7a3de0942a84e912f59088
   path: wat
+  enabled: false
+  note: Incompatible with current tree-sitter CLI, generation fails
   metadata:
     hasParser: true
     abi: 13
@@ -4825,6 +4849,8 @@
 - language: xquery
   url: https://github.com/grantmacken/tree-sitter-xquery
   ref: 85f15e8f6388981678838407c25f9222a7abe14b
+  enabled: false
+  note: Uses pre-release 'reserved' API incompatible with tree-sitter-cli 0.25+; repo inactive since 2023
   metadata:
     hasParser: true
     hasHighlights: true

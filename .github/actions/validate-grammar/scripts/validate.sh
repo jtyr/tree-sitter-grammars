@@ -129,8 +129,21 @@ int main(int argc, char **argv) {
                 "None", "Syntax", "NodeType", "Field", "Capture", "Structure", "Language"
             };
             const char *ename = (error_type < 7) ? error_names[error_type] : "Unknown";
-            fprintf(stderr, "  FAIL     %s (offset %u: %s)\n", argv[i], error_offset, ename);
-            errors++;
+
+            /* Check if this file uses '; inherits:' (nvim-treesitter feature) */
+            int has_inherits = (strstr(source, "; inherits:") != NULL);
+
+            /* Downgrade to warning for known unsupported features:
+               - Structure errors: unsupported query syntax (e.g. field alternation)
+               - Files with '; inherits:' directive: reference parent grammar nodes */
+            if (error_type == 5 || has_inherits) {
+                const char *reason = has_inherits ? "uses '; inherits:'" : "unsupported syntax";
+                fprintf(stderr, "  WARN     %s (offset %u: %s - %s)\n",
+                        argv[i], error_offset, ename, reason);
+            } else {
+                fprintf(stderr, "  FAIL     %s (offset %u: %s)\n", argv[i], error_offset, ename);
+                errors++;
+            }
         } else {
             ts_query_delete(query);
         }

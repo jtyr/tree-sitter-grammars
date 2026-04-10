@@ -28,11 +28,36 @@ jobs:
         id: check
         uses: ./.github/actions/check-release
 
-  build:
+  generate:
     needs: check-changes
     if: >-
       always() &&
       (github.event_name == 'push' || needs.check-changes.outputs.shouldRelease == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate parsers
+        uses: ./.github/actions/generate-grammar
+        with:
+          languages: all
+          cache-parsers: "true"
+          cache-key-prefix: release
+
+      - name: Upload generated sources
+        uses: actions/upload-artifact@v7
+        with:
+          name: generated-sources
+          path: grammars/*/src/
+          retention-days: 1
+
+  build:
+    needs:
+      - check-changes
+      - generate
+    if: >-
+      always() &&
+      needs.generate.result == 'success'
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +80,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Download generated sources
+        uses: actions/download-artifact@v8
+        with:
+          name: generated-sources
+          path: grammars/
 
       - name: Install cross-compiler
         if: matrix.platform == 'aarch64-linux'
@@ -104,7 +135,7 @@ jobs:
       - name: Extract shared libraries for validation
         uses: ./.github/actions/extract-tarball
         with:
-          tarball: release/tree-sitter-grammars-x86_64-linux.tar.gz
+          tarball: release/tree-sitter-grammars-x86_64-linux-shared.tar.gz
           outputDir: build
 
       - name: Validate query files
@@ -144,6 +175,6 @@ jobs:
       - name: Create release
         uses: ./.github/actions/create-release
         with:
-          tag: ${{ github.ref_name || needs.check-changes.outputs.tag }}
+          tag: ${{ github.event_name == 'push' && github.ref_name || needs.check-changes.outputs.tag }}
           releaseDir: release
           token: ${{ secrets.GITHUB_TOKEN }}
