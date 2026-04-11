@@ -17,17 +17,15 @@ repos:
           - --fix=lf
       - id: check-json
         name: Check JSON files
-        exclude: ^grammars/.*/_parent/
       - id: check-yaml
         name: Check YAML files
-        exclude: .*/templates/.*\.yaml$|^grammars/.*/_parent/
+        exclude: .*/templates/.*\.yaml$
 
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.35.1
     hooks:
       - id: yamllint
         name: Lint YAML files
-        exclude: ^grammars/.*/_parent/
         args:
           - --strict
 
@@ -43,7 +41,6 @@ repos:
     hooks:
       - id: shellcheck
         name: Lint shell scripts
-        exclude: ^grammars/.*/_parent/
 
   - repo: local
     hooks:
