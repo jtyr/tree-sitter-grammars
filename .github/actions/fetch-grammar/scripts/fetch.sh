@@ -86,8 +86,9 @@ fetch_entry() {
     fi
 
     # Set up output directories
-    local out_src="$REPO_ROOT/grammars/$lang/src"
-    local out_queries="$REPO_ROOT/grammars/$lang/queries"
+    local out_dir="$REPO_ROOT/grammars/$lang"
+    local out_src="$out_dir/src"
+    local out_queries="$out_dir/queries"
 
     # Queries-only entries: skip parser/scanner, only fetch .scm files
     if [ "$queries_only" != "true" ]; then
@@ -179,21 +180,94 @@ fetch_entry() {
         fi
     fi
 
-    # Copy grammar source files to the grammar root directory
+    # Copy grammar.js and all local JS dependencies to the grammar root
     if [ "$queries_only" != "true" ]; then
         if [ -f "$src_root/grammar.js" ]; then
-            cp "$src_root/grammar.js" "$REPO_ROOT/grammars/$lang/"
+            cp "$src_root/grammar.js" "$out_dir/"
         fi
+
         # Only copy package.json if grammar.js uses require() (needs npm deps)
         if [ -f "$src_root/package.json" ] && \
            grep -q 'require(' "$src_root/grammar.js" 2>/dev/null; then
-            cp "$src_root/package.json" "$REPO_ROOT/grammars/$lang/"
+            cp "$src_root/package.json" "$out_dir/"
+        fi
+
+        # For monorepos: also copy root package.json if it has dependencies
+        # (e.g. tree-sitter-typescript needs tree-sitter-javascript from npm)
+        if [ -n "$path" ] && [ -f "$tmpdir/repo/package.json" ] && \
+           grep -q '"dependencies"' "$tmpdir/repo/package.json" 2>/dev/null; then
+            mkdir -p "$out_dir/_parent"
+            cp "$tmpdir/repo/package.json" "$out_dir/_parent/"
+        fi
+
+        # Copy all local JS files/directories that grammar.js depends on
+        # (e.g. ./grammar/*.js, ./utils.js, ./dialect/*.js)
+        if [ -f "$src_root/grammar.js" ]; then
+            (cd "$src_root" && find . -name '*.js' -not -name 'grammar.js' \
+                -not -path '*/node_modules/*' -not -path '*/test/*' \
+                -not -path '*/examples/*' -not -path '*/bindings/*' \
+                -not -path './src/*' -print0) | \
+                while IFS= read -r -d '' f; do
+                    dir="$out_dir/$(dirname "$f")"
+                    mkdir -p "$dir"
+                    cp "$src_root/$f" "$dir/"
+                done
+
+            # For monorepos: copy parent-level JS files referenced via ../
+            # Rewrite the require paths to point within the grammar directory
+            if [ -n "$path" ]; then
+                grep -ohE "require\(['\"]\.\.\/[^'\"]*" "$src_root/grammar.js" 2>/dev/null | \
+                    sed "s/require(['\"]//; s/['\"]$//" | sort -u | \
+                    while read -r req; do
+                        # Find the source file (try with and without .js)
+                        local src_file=""
+                        for candidate in "$src_root/$req.js" "$src_root/$req" \
+                                         "$src_root/$req/index.js"; do
+                            if [ -f "$candidate" ]; then
+                                src_file="$candidate"
+                                break
+                            fi
+                        done
+                        [ -z "$src_file" ] && continue
+
+                        # Flatten: ../common/foo.js -> _parent/common/foo.js
+                        local flat_req
+                        flat_req=${req//\.\.\//_parent/}
+                        local flat_dir
+                        flat_dir=$(dirname "$flat_req")
+                        mkdir -p "$out_dir/$flat_dir"
+
+                        # Copy all JS and JSON files from the source directory
+                        local src_req_dir
+                        src_req_dir=$(dirname "$src_file")
+                        for f in "$src_req_dir"/*.js "$src_req_dir"/*.json; do
+                            [ -f "$f" ] || continue
+                            cp "$f" "$out_dir/$flat_dir/"
+                        done
+                    done
+
+                # Rewrite require('../...') to require('./_parent/...') in grammar.js
+                sed -i "s|'\\.\\./|'./_parent/|g; s|\"\\.\\./|\"./_parent/|g" "$out_dir/grammar.js" 2>/dev/null
+            fi
+
+            # Rewrite require('tree-sitter-<name>/...') to relative paths
+            # pointing to our local grammars/<name>/... directory.
+            # Skip if _parent/package.json exists (npm install will provide them).
+            if [ ! -f "$out_dir/_parent/package.json" ]; then
+                local grammars_dir="$REPO_ROOT/grammars"
+                find "$out_dir" -name '*.js' -print0 | while IFS= read -r -d '' js_file; do
+                    grep -q "require('tree-sitter-" "$js_file" 2>/dev/null || continue
+                    local rel
+                    rel=$(realpath --relative-to="$(dirname "$js_file")" "$grammars_dir")
+                    sed -i "s|require('tree-sitter-\([^'/]*\)/\([^']*\)')|require('$rel/\1/\2')|g" "$js_file"
+                    sed -i "s|require(\"tree-sitter-\([^\"/]*\)/\([^\"]*\)\")|require(\"$rel/\1/\2\")|g" "$js_file"
+                done
+            fi
         fi
     fi
 
     # Copy LICENSE file from repository root
     local repo_root="$tmpdir/repo"
-    local out_dir="$REPO_ROOT/grammars/$lang"
     if [ "$queries_only" = "true" ]; then
         # For queries-only entries, place LICENSE in the queries directory
         if [ -d "$out_dir/queries" ]; then

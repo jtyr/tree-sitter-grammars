@@ -9,7 +9,7 @@
  * Artificial Intelligence, pp. 2462 - 2467, 2007.
  */
 
-module.exports = grammar(require("../prolog/grammar"), {
+module.exports = grammar(require("./_parent/prolog/grammar"), {
   name: "problog",
   rules: {
     // 6.2.1.2 Clauses
