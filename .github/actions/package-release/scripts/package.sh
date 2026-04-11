@@ -1,17 +1,20 @@
 #!/bin/bash
 #
-# Package built grammar shared libraries into release tarballs.
+# Package built grammar libraries into release tarballs.
 #
 # Usage: package.sh --platform=PLATFORM --build-dir=DIR --output=DIR
 #
-# Creates a tarball containing per-language directories with .so and query files:
-#   tree-sitter-grammars-<platform>/
+# Creates two tarballs per platform:
+#   tree-sitter-grammars-<platform>-shared.tar.gz  (.so/.dylib/.dll files)
+#   tree-sitter-grammars-<platform>-static.tar.gz  (.a files)
+#
+# Each tarball contains per-language directories with library and query files:
+#   tree-sitter-grammars-<platform>-shared/
 #     python/
 #       python.so
 #       queries/
 #         highlights.scm
 #     checksums.sha256
-#     filelist.txt
 #
 # Platforms: x86_64-linux, aarch64-linux, aarch64-macos, x86_64-macos, x86_64-windows
 
@@ -47,12 +50,6 @@ case "$PLATFORM" in
     *) SO_EXT=so ;;
 esac
 
-TARBALL_NAME="tree-sitter-grammars-$PLATFORM"
-STAGING="$OUTPUT_DIR/$TARBALL_NAME"
-
-rm -rf "$STAGING"
-mkdir -p "$STAGING"
-
 # Get all enabled grammars with hasParser (portable, no yq dependency)
 get_enabled_grammars() {
     awk '
@@ -65,60 +62,73 @@ get_enabled_grammars() {
     ' "$REGISTRY"
 }
 
-included=0
-skipped=0
-skipped_list=""
+# Package one tarball (shared or static)
+package_variant() {
+    local variant=$1  # "shared" or "static"
+    local ext=$2      # file extension to look for
 
-for lang in $(get_enabled_grammars); do
-    so_file="$BUILD_DIR/$lang.$SO_EXT"
-    queries_dir="$REPO_ROOT/grammars/$lang/queries"
+    local tarball_name="tree-sitter-grammars-$PLATFORM-$variant"
+    local staging="$OUTPUT_DIR/$tarball_name"
 
-    if [ ! -f "$so_file" ]; then
-        skipped=$((skipped + 1))
-        skipped_list="$skipped_list $lang"
-        continue
-    fi
+    rm -rf "$staging"
+    mkdir -p "$staging"
 
-    # Create language directory
-    mkdir -p "$STAGING/$lang"
-    cp "$so_file" "$STAGING/$lang/$lang.$SO_EXT"
+    local included=0
+    local skipped=0
+    local skipped_list=""
 
-    # Copy query files and their LICENSE if present
-    if [ -d "$queries_dir" ]; then
-        mkdir -p "$STAGING/$lang/queries"
-        cp "$queries_dir"/*.scm "$STAGING/$lang/queries/" 2>/dev/null
-        if [ -f "$queries_dir/LICENSE" ]; then
-            cp "$queries_dir/LICENSE" "$STAGING/$lang/queries/"
+    for lang in $(get_enabled_grammars); do
+        local lib_file="$BUILD_DIR/$lang.$ext"
+        local queries_dir="$REPO_ROOT/grammars/$lang/queries"
+
+        if [ ! -f "$lib_file" ]; then
+            skipped=$((skipped + 1))
+            skipped_list="$skipped_list $lang"
+            continue
         fi
+
+        mkdir -p "$staging/$lang"
+        cp "$lib_file" "$staging/$lang/$lang.$ext"
+
+        # Copy query files and their LICENSE if present
+        if [ -d "$queries_dir" ]; then
+            mkdir -p "$staging/$lang/queries"
+            cp "$queries_dir"/*.scm "$staging/$lang/queries/" 2>/dev/null
+            if [ -f "$queries_dir/LICENSE" ]; then
+                cp "$queries_dir/LICENSE" "$staging/$lang/queries/"
+            fi
+        fi
+
+        # Copy grammar LICENSE if present
+        if [ -f "$REPO_ROOT/grammars/$lang/LICENSE" ]; then
+            cp "$REPO_ROOT/grammars/$lang/LICENSE" "$staging/$lang/"
+        fi
+
+        included=$((included + 1))
+    done
+
+    if [ $included -eq 0 ]; then
+        echo "WARNING: no grammars to package for $variant"
+        rm -rf "$staging"
+        return 1
     fi
 
-    # Copy grammar LICENSE if present
-    if [ -f "$REPO_ROOT/grammars/$lang/LICENSE" ]; then
-        cp "$REPO_ROOT/grammars/$lang/LICENSE" "$STAGING/$lang/"
+    # Create tarball
+    (cd "$OUTPUT_DIR" && tar czf "$tarball_name.tar.gz" "$tarball_name")
+    rm -rf "$staging"
+
+    # Append checksum to the shared checksums file
+    (cd "$OUTPUT_DIR" && sha256sum "$tarball_name.tar.gz") >> "$OUTPUT_DIR/tree-sitter-grammars.sha256"
+
+    echo "Package: $OUTPUT_DIR/$tarball_name.tar.gz"
+    echo "  $included grammars included"
+
+    if [ $skipped -gt 0 ]; then
+        echo "  $skipped grammars skipped (not built):$skipped_list"
     fi
+}
 
-    included=$((included + 1))
-done
+mkdir -p "$OUTPUT_DIR"
 
-if [ $included -eq 0 ]; then
-    echo 'ERROR: no grammars to package'
-    exit 1
-fi
-
-# Create tarball
-(cd "$OUTPUT_DIR" && tar czf "$TARBALL_NAME.tar.gz" "$TARBALL_NAME")
-
-# Append checksum to the shared checksums file
-(cd "$OUTPUT_DIR" && sha256sum "$TARBALL_NAME.tar.gz") >> "$OUTPUT_DIR/tree-sitter-grammars.sha256"
-
-echo "Package: $OUTPUT_DIR/$TARBALL_NAME.tar.gz"
-echo "  $included grammars included"
-
-if [ $skipped -gt 0 ]; then
-    echo "  $skipped grammars skipped (not built):$skipped_list"
-fi
-
-# Write skipped list for release notes
-if [ -n "$skipped_list" ]; then
-    echo "$skipped_list" > "$OUTPUT_DIR/$TARBALL_NAME.skipped"
-fi
+package_variant "shared" "$SO_EXT"
+package_variant "static" "a"

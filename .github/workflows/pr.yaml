@@ -3,6 +3,10 @@ name: PR - Build and Validate
 on:
   pull_request:
 
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -33,8 +37,31 @@ jobs:
         with:
           baseSha: ${{ github.event.pull_request.base.sha }}
 
-  build:
+  generate:
     needs: detect-changes
+    if: needs.detect-changes.outputs.hasChanges == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate parsers
+        uses: ./.github/actions/generate-grammar
+        with:
+          languages: ${{ needs.detect-changes.outputs.languages }}
+          cache-parsers: "true"
+          cache-key-prefix: pr-${{ github.event.pull_request.number }}
+
+      - name: Upload generated sources
+        uses: actions/upload-artifact@v7
+        with:
+          name: generated-sources
+          path: grammars/*/src/
+          retention-days: 1
+
+  build:
+    needs:
+      - detect-changes
+      - generate
     if: needs.detect-changes.outputs.hasChanges == 'true'
     strategy:
       fail-fast: false
@@ -58,6 +85,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Download generated sources
+        uses: actions/download-artifact@v8
+        with:
+          name: generated-sources
+          path: grammars/
 
       - name: Install cross-compiler
         if: matrix.platform == 'aarch64-linux'

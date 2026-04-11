@@ -37,8 +37,9 @@ if git diff --name-only "$base_sha"..HEAD | grep -q '^grammars.yaml$'; then
     changed="$changed $yaml_changed"
 fi
 
-# Deduplicate and trim
-languages=$(echo "$changed" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ *$//')
+# Filter to only enabled grammars and deduplicate
+enabled=$(yq -r '.[] | select(.enabled != false) | .language' "$REPO_ROOT/grammars.yaml")
+languages=$(echo "$changed" | tr ' ' '\n' | sort -u | grep -xFf <(echo "$enabled") | tr '\n' ' ' | sed 's/ *$//')
 
 if [ -n "$languages" ]; then
     echo "Changed grammars: $languages"
