@@ -204,7 +204,7 @@
 - language: beancount
   url: https://github.com/polarmutex/tree-sitter-beancount
   branch: master
-  ref: 429cff869513cf9e34a2cf604fbfaaedc467e809
+  ref: 9db1ad0d5047e5e7f12db50741aba1c32716779a
   metadata:
     hasParser: true
     hasScanner: true
@@ -1145,7 +1145,7 @@
 
 - language: fluentbit
   url: https://github.com/sh-cho/tree-sitter-fluentbit
-  ref: c377d41e718270819362998ca102f9565fd2e38a
+  ref: b79a0d7380a81d0028d9ac19f93cc844ceac74ef
   metadata:
     hasParser: true
     hasHighlights: true
@@ -1988,7 +1988,7 @@
 
 - language: javadoc
   url: https://github.com/rmuir/tree-sitter-javadoc
-  ref: cf8570c38321bbb31b429e47e870fc89ae1f74ed
+  ref: 11ec3cd9d2a6a8f9a451249043e852d3581c856f
   metadata:
     hasParser: true
     hasScanner: true
@@ -2439,7 +2439,7 @@
 
 - language: magik
   url: https://github.com/krn-robin/tree-sitter-magik
-  ref: f288161c5f64f0582386e54d90cf1a720520b55d
+  ref: 7f821c17c1b109ecd4f7559bb5ebb7eff5315cbc
   metadata:
     hasParser: true
     hasHighlights: true
@@ -2576,7 +2576,7 @@
 - language: mlir
   url: https://github.com/artagnon/tree-sitter-mlir
   branch: master
-  ref: 60d1feeabf01f730e6b8500e23918d9972772baf
+  ref: 38b1ab3044ec62c0c24c90de4bf5fb947561f390
   metadata:
     hasParser: true
     hasHighlights: true
@@ -3467,7 +3467,7 @@
 - language: robot
   url: https://github.com/Hubro/tree-sitter-robot
   branch: master
-  ref: 0f010f439e7873db42d3aabae8a48a8f61a89910
+  ref: b317756ae0fb90ca945f900c77cdd3513d0c0eb4
   metadata:
     hasParser: true
     hasHighlights: true
@@ -3892,7 +3892,7 @@
 
 - language: ssh_client_config
   url: https://github.com/metio/tree-sitter-ssh-client-config
-  ref: c01c35b4aacb3b1864fce2f3b492eb8baafd42a5
+  ref: 2223c632210c958068f3968f7871aaffbfce3320
   metadata:
     hasParser: true
     hasHighlights: true
@@ -4045,7 +4045,7 @@
 
 - language: swift
   url: https://github.com/alex-pinkus/tree-sitter-swift
-  ref: 50f2735c48adbbf06c01c37d151f73c9d9dadc6a
+  ref: da7f9370b70ba31357122c211734db98eb6f6a35
   generate: true
   metadata:
     hasParser: true
@@ -4955,7 +4955,7 @@
 
 - language: zsh
   url: https://github.com/georgeharker/tree-sitter-zsh
-  ref: v0.63.1
+  ref: v0.63.3
   metadata:
     hasParser: true
     hasScanner: true
