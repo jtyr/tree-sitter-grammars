@@ -125,6 +125,12 @@ try_local_generate() {
         (cd "$grammar_dir" && npm install --ignore-scripts --loglevel=error 2>&1) || true
     fi
 
+    # For monorepos: install parent-level npm dependencies
+    if [ -f "$grammar_dir/_parent/package.json" ] && \
+       grep -q '"dependencies"' "$grammar_dir/_parent/package.json" 2>/dev/null; then
+        (cd "$grammar_dir/_parent" && npm install --ignore-scripts --loglevel=error 2>&1) || true
+    fi
+
     (cd "$grammar_dir" && tree-sitter generate 2>&1)
 }
 
