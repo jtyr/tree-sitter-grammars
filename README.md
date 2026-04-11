@@ -1,6 +1,6 @@
 # Tree-sitter Grammar Repository
 
-Pre-built tree-sitter grammar shared libraries and query files for syntax
+Pre-built tree-sitter grammar shared and static libraries for syntax
 highlighting. Originally created for
 [Midnight Commander](https://github.com/MidnightCommander/mc) but designed to
 be editor-agnostic.
@@ -10,9 +10,11 @@ be editor-agnostic.
 This repository serves as a resilient, centralized source of tree-sitter
 grammar binaries and query files. It:
 
-- Stores parser/scanner source code and query files from upstream grammar
+- Stores grammar source files (`grammar.js`, `scanner.c`) from upstream
   repositories to protect against upstream deletion
-- Builds shared libraries (`.so`/`.dylib`/`.dll`) for multiple platforms
+- Generates `parser.c` from `grammar.js` during CI (not stored in the repo)
+- Builds shared (`.so`/`.dylib`/`.dll`) and static (`.a`) libraries for
+  multiple platforms
 - Validates all query files against their grammars
 - Publishes versioned release tarballs
 
@@ -33,9 +35,9 @@ All grammars are defined in `grammars.yaml`. Each entry specifies:
   # queryPath: queries   # query files location (relative to repo root), for
   #                      # monorepos where queries are not under path/queries/
   # branch: main         # omit if main, specify for master or other branches
-  # generate: true       # needs tree-sitter generate (no parser.c committed)
   # extraFiles: []       # extra headers needed for compilation
   # ignoreFiles: []      # files to remove after fetch (broken upstream files)
+  # skipScanner: false   # set true when we maintain our own scanner.c
   # enabled: true        # set false to disable
   # note: reason         # explanation for disabled grammars
   metadata:              # all boolean fields default to false, only list true values
@@ -75,8 +77,7 @@ the default using the following priority:
 1. Official [`tree-sitter`](https://github.com/tree-sitter) org repository
 2. Community [`tree-sitter-grammars`](https://github.com/tree-sitter-grammars) org repository
 3. Repository with both parser and highlights.scm
-4. Repository with parser.c (over those requiring generation)
-5. First listed
+4. First listed
 
 Disabled variants remain in `grammars.yaml` with `enabled: false` and a `note`
 explaining the reason. Users can enable an alternative by setting `enabled: true`
@@ -84,14 +85,21 @@ on their preferred variant and disabling the current default.
 
 ### Inclusion criteria
 
-A grammar is included if it has at least `parser.c` committed in its upstream
-repository. Grammars requiring `tree-sitter generate` (only `grammar.js`
-available) are marked with `generate: true` and generated during
-fetch using the `tree-sitter` CLI.
+A grammar is included if it has `grammar.js` in its upstream repository.
+The `parser.c` is generated from `grammar.js` during CI using the
+`tree-sitter` CLI and is not stored in the repository.
 
 For syntax highlighting, `highlights.scm` is required. Grammars without it
 can still be used for AST navigation, code folding, and other features by
 editors that support those capabilities.
+
+### C++ scanners
+
+MC is a C-only project and cannot link against C++ code. Grammars with C++
+scanners (`scanner.cc`) are rewritten to C (`scanner.c`) and maintained in
+this repository. The `skipScanner: true` field in `grammars.yaml` prevents
+the fetch script from overwriting our maintained scanner with the upstream
+C++ version. Currently this applies to the `sql` grammar.
 
 ### Branch convention
 
@@ -105,17 +113,12 @@ tree-sitter runtime library is backward compatible within the range defined by
 `TREE_SITTER_MIN_COMPATIBLE_LANGUAGE_VERSION` (13) through
 `TREE_SITTER_LANGUAGE_VERSION` (15). No ABI restriction is applied.
 
-### Scanner files
+### Tree-sitter version
 
-The scanner (`scanner.c`) is an optional hand-written component that handles
-tokenization which cannot be expressed in the declarative grammar rules (e.g.,
-Python indentation, Bash heredocs, Ruby string interpolation). When present,
-it must be included alongside `parser.c` as the parser will not function
-correctly without it.
-
-Most scanners are written in C (`scanner.c`). A few use C++ (`scanner.cc`).
-The build script handles both: C scanners are compiled with `gcc`, C++ scanners
-are compiled with `g++`, and the object files are linked together.
+The tree-sitter CLI and library version is pinned in
+`.github/actions/common.sh`. Both the generate step (CLI) and the validate
+step (library) use this version to ensure consistency. Updating the version
+requires changing only that one file.
 
 ## Repository structure
 
@@ -124,103 +127,247 @@ tree-sitter-grammars/
   grammars.yaml                    # grammar registry
   GRAMMARS.md                      # auto-generated inventory table
   LICENSE                          # repository license (MIT)
-  grammars/                        # stored parser/scanner/query files
+  grammars/                        # stored grammar source/query files
     python/
       LICENSE                      # upstream grammar license
+      grammar.js                   # grammar definition (source of truth)
       src/
-        parser.c
-        scanner.c
+        scanner.c                  # hand-written scanner (when present)
       queries/
         highlights.scm
         locals.scm
     html/
       LICENSE
+      grammar.js
       src/
-        parser.c
         scanner.c
-        tag.h
+        tag.h                      # scanner header
       queries/
         highlights.scm
         injections.scm
-    graphql/                       # example: queries from nvim-treesitter
-      LICENSE                      # grammar license
+    typescript/                    # monorepo example
+      LICENSE
+      grammar.js                   # requires('./_parent/common/define-grammar')
+      package.json                 # npm deps for grammar.js require()
       src/
-        parser.c
+        scanner.c
+      _parent/                     # files from parent directory in monorepo
+        common/
+          define-grammar.js
+        package.json               # root-level npm deps (e.g. tree-sitter-javascript)
       queries/
-        LICENSE                    # nvim-treesitter license (Apache-2.0)
         highlights.scm
-        injections.scm
+    haskell/                       # complex grammar with many local JS modules
+      LICENSE
+      grammar.js
+      grammar/                     # local JS modules used by grammar.js
+        class.js
+        decl.js
+        exp.js
+        ...
+      src/
+        scanner.c
+        unicode.h
+      queries/
+        highlights.scm
+        locals.scm
   scripts/
+    common.sh                      # shared variables (tree-sitter version)
     generate-grammars-md.sh        # regenerate GRAMMARS.md from grammars.yaml
   .github/
-    workflows/
-      pr.yaml                     # lint, build, validate on PRs
-      updater.yaml                # check upstream for updates (Saturday)
-      releaser.yaml               # build, package, release (Sunday)
     actions/
-      fetch-grammar/              # download grammar from upstream
-      build-grammar/              # compile shared library from sources
-      validate-grammar/           # verify .scm files compile against grammar
-      package-release/            # create tarballs, checksums, file list
-      detect-changes/             # find changed grammars in a PR
-      check-updates/              # check upstream for newer versions
-      check-release/              # check if new release is needed
-      extract-tarball/            # extract .so files from release tarball
-      create-release/             # generate release notes and publish
+      common.sh                    # pinned tree-sitter version
+      fetch-grammar/               # download grammar from upstream
+      generate-grammar/            # generate parser.c from grammar.js
+      build-grammar/               # compile shared/static libraries
+      validate-grammar/            # verify .scm files compile against grammar
+      package-release/             # create tarballs, checksums, file list
+      detect-changes/              # find changed grammars in a PR
+      check-updates/               # check upstream for newer versions
+      check-release/               # check if new release is needed
+      extract-tarball/             # extract files from release tarball
+      create-release/              # generate release notes and publish
+    workflows/
+      pr.yaml                      # lint, generate, build, validate on PRs
+      updater.yaml                 # check upstream for updates (Saturday)
+      releaser.yaml                # generate, build, package, release (Sunday)
 ```
 
-The `grammars/` directory mirrors the upstream repository layout per grammar:
-`src/` for parser/scanner source files (matching upstream convention) and
-`queries/` for `.scm` query files. Extra headers needed for compilation
-(e.g., `tag.h`, `unicode.h`) are stored alongside `parser.c` in `src/`.
+### What is stored vs generated
 
-All scripts in `.github/actions/*/scripts/` are designed to be executable
-ad-hoc for local development and testing, not only within GitHub Actions.
+| File | Stored in repo | Generated during CI |
+|------|:-:|:-:|
+| `grammar.js` | Yes | - |
+| `scanner.c` / `scanner.cc` | Yes | - |
+| Scanner headers (`.h`) | Yes | - |
+| Local JS modules (`grammar/*.js`, `dialect/*.js`) | Yes | - |
+| `package.json` (when grammar.js uses `require()`) | Yes | - |
+| `_parent/` (monorepo parent files) | Yes | - |
+| Query files (`.scm`) | Yes | - |
+| `parser.c` | No | `tree-sitter generate` |
+| `tree_sitter/parser.h` | No | `tree-sitter generate` |
+| `node_modules/` | No | `npm install` |
+| `.so` / `.dylib` / `.dll` / `.a` | No | `gcc` / `clang` |
 
-## Licensing
+## Fetch
 
-This repository is licensed under the [MIT License](LICENSE).
+The fetch script (`.github/actions/fetch-grammar/scripts/fetch.sh`) downloads
+grammar sources from upstream repositories. For each grammar:
 
-Each grammar in `grammars/` includes its upstream LICENSE file. When query
-files are sourced from a different repository (e.g., nvim-treesitter), the
-query repository's license is placed inside the `queries/` directory.
+1. Clone the upstream repo at the pinned `ref`
+2. Copy scanner files (`scanner.c`, headers, subdirectory helpers) into
+   `grammars/<lang>/src/` -- skipped if `skipScanner: true`
+3. Copy `grammar.js` and all local JS dependencies (`.js` files in
+   subdirectories excluding `node_modules/`, `test/`, `examples/`,
+   `bindings/`, `docs/`, `scripts/`, `src/`)
+4. Copy `package.json` only if `grammar.js` uses `require()`
+5. For monorepos (`path` field set):
+   - Copy parent-level JS/JSON files referenced via `../` into `_parent/`
+   - Rewrite `require('../...')` to `require('./_parent/...')` in `grammar.js`
+   - Copy root `package.json` into `_parent/` if it has dependencies
+   - Rewrite `require('tree-sitter-<name>/...')` to relative paths pointing
+     to our local `grammars/<name>/` -- unless `_parent/package.json` exists
+     (npm will resolve them)
+6. Copy query files (`.scm`) from the grammar's `queries/` directory
+7. Copy LICENSE file from the repository root
 
-## Query files
+The fetch does **not** run `tree-sitter generate` or `npm install`. Generation
+is handled separately by the generate step.
 
-Each grammar may include one or more `.scm` query files:
+## Generate
 
-| File | Purpose | Used by MC |
-|------|---------|------------|
-| `highlights.scm` | Syntax highlighting rules | Yes |
-| `locals.scm` | Scope and variable tracking | No |
-| `injections.scm` | Language injection rules | No |
-| `folds.scm` | Code folding ranges | No |
-| `indents.scm` | Auto-indentation rules | No |
-| `tags.scm` | Symbol navigation/tags | No |
+The generate step (`.github/actions/generate-grammar/`) produces `parser.c`
+from `grammar.js` using the `tree-sitter` CLI:
 
-Query files from upstream grammar repositories are stored unmodified. Query
-files sourced from nvim-treesitter have neovim-specific predicates
-(`#lua-match?`, `#vim-match?`) replaced with the standard `#match?` predicate.
+1. Install the pinned `tree-sitter-cli` version via npm
+2. Restore parser cache (if enabled)
+3. For each grammar:
+   - Check cache -- if hit, copy `parser.c` and skip generation
+   - Run `npm install` if `package.json` exists (local or in `_parent/`)
+   - Run `tree-sitter generate` to produce `parser.c`
+   - Store result in cache
 
-MC maps the standard capture names (`@keyword`, `@function`, `@string`, etc.)
-to its own color scheme via a separate color mapping configuration.
+### Caching
+
+Generated `parser.c` files are cached between CI runs using GitHub Actions
+cache. The cache key is computed per-grammar from the SHA-256 of `grammar.js`,
+`scanner.c`, `scanner.cc`, and `package.json`. This means:
+
+- If grammar sources haven't changed, the cached `parser.c` is reused
+- Cache is scoped by prefix: `pr-<number>` for PRs, `release` for releases
+- `restore-keys` prefix matching allows partial cache hits (e.g. after
+  adding a new grammar, existing grammars still hit cache)
+
+npm packages (`~/.npm`) are also cached, shared across all workflows.
+
+## Build
+
+The build step (`.github/actions/build-grammar/`) compiles grammar libraries
+from generated `parser.c` and stored `scanner.c`:
+
+```bash
+# Shared library
+gcc -shared -fPIC -O2 -Igrammars/<lang>/src -o <lang>.so \
+    grammars/<lang>/src/parser.c \
+    grammars/<lang>/src/scanner.c  # if present
+
+# Static library
+gcc -fPIC -O2 -Igrammars/<lang>/src -c -o <lang>.parser.o parser.c
+gcc -fPIC -O2 -Igrammars/<lang>/src -c -o <lang>.scanner.o scanner.c
+ar rcs <lang>.a <lang>.parser.o <lang>.scanner.o
+```
+
+No tree-sitter CLI, Node.js, or Rust toolchain is required for compilation.
+Only a C compiler is needed. The `tree_sitter/parser.h` header is generated
+alongside `parser.c` during the generate step.
+
+### Platform matrix
+
+| Platform | Runner | Compiler | Shared | Static |
+|----------|--------|----------|--------|--------|
+| Linux x86_64 | ubuntu-latest | gcc (native) | `.so` | `.a` |
+| Linux aarch64 | ubuntu-latest | aarch64-linux-gnu-gcc (cross) | `.so` | `.a` |
+| macOS aarch64 | macos-latest | clang (native) | `.dylib` | `.a` |
+| macOS x86_64 | macos-latest | clang -arch x86_64 (cross) | `.dylib` | `.a` |
+| Windows x86_64 | windows-latest | gcc (MinGW) | `.dll` | `.a` |
+
+### Validation
+
+All `.scm` query files are validated by compiling them with `ts_query_new()`
+against their grammar's shared library. This catches invalid node names, field
+names, and query syntax errors that would cause highlighting failures at
+runtime.
+
+Known limitations handled as warnings (not failures):
+
+- **`; inherits:` directive**: nvim-treesitter feature for query inheritance,
+  not supported by the validator
+- **Structure errors**: advanced query syntax not supported by the pinned
+  tree-sitter library version
+
+## Workflows
+
+### PR Workflow (`pr.yaml`)
+
+Triggered on all pull requests. Concurrent runs on the same PR are cancelled
+when a new push arrives.
+
+1. **Lint**: pre-commit hooks (YAML lint, shellcheck, markdown lint,
+   GRAMMARS.md sync)
+2. **Detect changes**: identify which grammars changed (filters out disabled
+   grammars)
+3. **Generate** (single runner): generate `parser.c` for changed grammars,
+   upload as artifact
+4. **Build** (5 platforms in parallel): download generated sources, compile
+   shared/static libraries
+5. **Validate**: verify query files against built grammars
+6. **Auto-approve**: approve PRs from the updater bot if all checks pass
+
+### Updater Workflow (`updater.yaml`)
+
+Runs on a weekly schedule (Saturday). For each enabled grammar:
+
+1. Checks the upstream repository for newer commits on the configured branch
+   (or newer tags if the grammar uses tags)
+2. If changes are found, fetches the updated source files and query files
+3. Updates `ref` in `grammars.yaml`
+4. Commits the changes and creates a pull request
+
+The PR is then picked up by the PR workflow for build/test validation.
+
+### Releaser Workflow (`releaser.yaml`)
+
+Triggered in two ways:
+
+- **Scheduled** (Sunday): automatically releases if there are new commits
+  since the last release, using a `YYYY.MM.DD` tag
+- **Tag push**: manually push a tag to trigger a release
+
+Steps:
+
+1. **Generate** (single runner): generate all parsers with caching, upload as
+   artifact
+2. **Build** (5 platforms in parallel): download generated sources, compile
+   and strip libraries, package into tarballs
+3. **Validate**: verify query files against built grammars
+4. **Release**: create GitHub release with tarballs and checksums
 
 ## Release packages
 
-Releases are published as tarballs, one per platform:
+Releases are published as tarballs, one per platform per library type:
 
 ```text
-tree-sitter-grammars-x86_64-linux.tar.gz
-tree-sitter-grammars-aarch64-linux.tar.gz
-tree-sitter-grammars-aarch64-macos.tar.gz
-tree-sitter-grammars-x86_64-macos.tar.gz
-tree-sitter-grammars-x86_64-windows.tar.gz
+tree-sitter-grammars-x86_64-linux-shared.tar.gz
+tree-sitter-grammars-x86_64-linux-static.tar.gz
+tree-sitter-grammars-aarch64-linux-shared.tar.gz
+tree-sitter-grammars-aarch64-linux-static.tar.gz
+...
 ```
 
 Each tarball contains all enabled grammars:
 
 ```text
-tree-sitter-grammars-x86_64-linux/
+tree-sitter-grammars-x86_64-linux-shared/
   python/
     python.so
     LICENSE
@@ -232,139 +379,33 @@ tree-sitter-grammars-x86_64-linux/
     LICENSE
     queries/
       highlights.scm
-  html/
-    html.so
-    LICENSE
-    queries/
-      highlights.scm
-      injections.scm
 ```
 
 A `tree-sitter-grammars.sha256` file with SHA-256 checksums for all tarballs
 is published alongside the release.
-
-Shared library naming is platform-specific: `.so` on Linux, `.dylib` on macOS,
-`.dll` on Windows. Consumers using GLib's `g_module_open()` can omit the
-extension as it is appended automatically based on the platform.
-
-Libraries are stripped of debug symbols before packaging. Grammar parsers are
-generated code that is not typically debugged. Developers needing debug symbols
-can rebuild from the source files stored in the `grammars/` directory.
 
 ### Release tags
 
 Tags follow calendar versioning: `YYYY.MM.DD`, with an optional `+N` build
 suffix for multiple releases on the same day (e.g., `2026.03.17+2`).
 
-To create a release:
-
-```bash
-git tag 2026.03.17
-git push --tags
-```
-
-Release notes include a list of grammars updated since the last release.
-
 ### Download URLs
-
-The tarball URL is stable across releases for a given platform:
 
 ```text
 # Latest release
-https://github.com/<org>/tree-sitter-grammars/releases/latest/download/tree-sitter-grammars-x86_64-linux.tar.gz
+https://github.com/<org>/tree-sitter-grammars/releases/latest/download/tree-sitter-grammars-x86_64-linux-shared.tar.gz
 
 # Specific version
-https://github.com/<org>/tree-sitter-grammars/releases/download/2026.03.17/tree-sitter-grammars-x86_64-linux.tar.gz
+https://github.com/<org>/tree-sitter-grammars/releases/download/2026.03.17/tree-sitter-grammars-x86_64-linux-shared.tar.gz
 ```
 
-## Build pipeline
+## Licensing
 
-### Compilation
+This repository is licensed under the [MIT License](LICENSE).
 
-Each grammar is compiled with a single `gcc` (or `clang`) invocation:
-
-```bash
-gcc -shared -fPIC -O2 -Igrammars/<lang>/src -o <lang>.so \
-    grammars/<lang>/src/parser.c \
-    grammars/<lang>/src/scanner.c  # if present
-```
-
-No tree-sitter CLI, Node.js, or Rust toolchain is required for compilation.
-Only a C compiler and the tree-sitter internal headers
-(`tree_sitter/parser.h`) which are included by `parser.c`.
-
-Grammars marked with `generate: true` need the `tree-sitter` CLI to
-generate `parser.c` from `grammar.js` before compilation. This is handled
-automatically by the fetch script.
-
-### Platform matrix
-
-| Platform | Runner | Compiler | Output |
-|----------|--------|----------|--------|
-| Linux x86_64 | ubuntu-latest | gcc (native) | .so |
-| Linux aarch64 | ubuntu-latest | aarch64-linux-gnu-gcc (cross) | .so |
-| macOS aarch64 | macos-latest | clang (native) | .dylib |
-| macOS x86_64 | macos-latest | clang -arch x86_64 (cross) | .dylib |
-| Windows x86_64 | windows-latest | gcc (MinGW) | .dll |
-
-Linux aarch64 is cross-compiled from the Ubuntu runner. Grammar shared
-libraries are self-contained (no external library dependencies at compile
-time), making cross-compilation straightforward.
-
-### Validation
-
-All `.scm` query files are validated by compiling them with `ts_query_new()`
-against their grammar. This catches invalid node names, field names, and
-query syntax errors that would cause silent highlighting failures at runtime.
-
-## Workflows
-
-### PR Workflow (`pr.yaml`)
-
-Triggered on all pull requests. Runs pre-commit hooks (YAML lint, shellcheck,
-markdown lint, GRAMMARS.md sync check) on every PR. For PRs that modify
-`grammars.yaml` or files under `grammars/`, additionally builds and validates
-only the changed grammars across all platforms. A failing grammar blocks the
-PR from merging.
-
-### Updater Workflow (`updater.yaml`)
-
-Runs on a weekly schedule (Saturday). For each enabled grammar in
-`grammars.yaml`:
-
-1. Checks the upstream repository for newer commits on the configured branch
-   (or newer tags if the grammar uses tags)
-2. If changes are found, downloads the updated source files and query files
-3. Updates `ref` in `grammars.yaml`
-4. Commits the changes and creates a pull request
-
-The PR is then picked up by the PR workflow for build/test validation. A human
-reviews and merges.
-
-If an upstream repository is unreachable (deleted, private, or temporarily
-down), the updater skips that grammar and continues with the rest. The existing
-source files in `grammars/` remain intact.
-
-### Releaser Workflow (`releaser.yaml`)
-
-Triggered in two ways:
-
-- **Scheduled** (Sunday): automatically releases if there are new commits
-  since the last release, using a `YYYY.MM.DD` tag
-- **Tag push**: manually push a tag to trigger a release
-  (`git tag 2026.03.17 && git push --tags`). Accepts `YYYY.MM.DD` and
-  `YYYY.MM.DD+N` for multiple releases on the same day
-
-Steps:
-
-1. Builds all enabled grammars for all platforms
-2. Strips debug symbols
-3. Validates query files against built grammars
-4. Packages into per-platform tarballs with checksums and file lists
-5. Creates a GitHub release with the tarballs attached
-
-If a grammar fails to build, it is excluded from the release tarball for that
-platform. The release notes document which grammars were excluded and why.
+Each grammar in `grammars/` includes its upstream LICENSE file. When query
+files are sourced from a different repository (e.g., nvim-treesitter), the
+query repository's license is placed inside the `queries/` directory.
 
 ## Contributing
 
@@ -373,14 +414,16 @@ platform. The release notes document which grammars were excluded and why.
 1. Find the upstream repository (see the
    [tree-sitter wiki](https://github.com/tree-sitter/tree-sitter/wiki/List-of-parsers))
 2. Add an entry to `grammars.yaml` with the repository URL, ref, and metadata
-3. Run the fetch script to download the source files:
+3. Run the fetch script:
    `.github/actions/fetch-grammar/scripts/fetch.sh <language>`
-4. Run the build script to verify compilation:
+4. Run the generate script:
+   `.github/actions/generate-grammar/scripts/generate.sh <language>`
+5. Run the build script:
    `.github/actions/build-grammar/scripts/build.sh <language>`
-5. Run the validation script to verify query files:
+6. Run the validation script:
    `.github/actions/validate-grammar/scripts/validate.sh <language>`
-6. Regenerate the inventory: `scripts/generate-grammars-md.sh`
-7. Submit a pull request
+7. Regenerate the inventory: `scripts/generate-grammars-md.sh`
+8. Submit a pull request
 
 ### Updating a grammar
 
@@ -389,14 +432,19 @@ The updater workflow handles this automatically. For manual updates, change the
 
 ### Disabling a grammar
 
-Set `enabled: false` and add a `note` explaining the reason:
+Set `enabled: false` and add a `note` explaining the reason. Remove the
+grammar's directory from `grammars/`:
 
 ```yaml
 - language: example
   url: https://github.com/example/tree-sitter-example
   ref: abc123
   enabled: false
-  note: Build fails on aarch64
+  note: Upstream highlights.scm references non-existent node types at pinned ref
+```
+
+```bash
+rm -rf grammars/example
 ```
 
 ## Local testing
@@ -409,49 +457,26 @@ All scripts can be run locally for development and testing.
 # Fetch all grammars
 .github/actions/fetch-grammar/scripts/fetch.sh --all
 
+# Generate all parsers
+.github/actions/generate-grammar/scripts/generate.sh --all
+
 # Build all grammars
 .github/actions/build-grammar/scripts/build.sh --all
 
 # Validate all query files
 .github/actions/validate-grammar/scripts/validate.sh --all
 
-# Package release tarball
-.github/actions/package-release/scripts/package.sh \
-    --platform=x86_64-linux \
-    --build-dir=build \
-    --output=release
-
-# Preview release notes (dry run)
-.github/actions/create-release/scripts/create-release.sh \
-    --dry-run 2026.03.18 release
-
-# Clean up build artifacts
-rm -rf build release
+# Clean up generated files
+find grammars -name "parser.c" -path "*/src/parser.c" -delete
+find grammars -type d -name "tree_sitter" -path "*/src/tree_sitter" -exec rm -rf {} +
+rm -rf build
 ```
 
 ### Single grammar
 
 ```bash
 .github/actions/fetch-grammar/scripts/fetch.sh python
+.github/actions/generate-grammar/scripts/generate.sh python
 .github/actions/build-grammar/scripts/build.sh python
 .github/actions/validate-grammar/scripts/validate.sh python
-rm -rf build
-```
-
-### Regenerate inventory
-
-After modifying `grammars.yaml`, regenerate the inventory table:
-
-```bash
-scripts/generate-grammars-md.sh
-```
-
-### Check for updates
-
-Check upstream repositories for newer versions (requires `GITHUB_TOKEN` for
-tag-based grammars to avoid API rate limiting):
-
-```bash
-export GITHUB_TOKEN=...
-.github/actions/check-updates/scripts/check-updates.sh
 ```

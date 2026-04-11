@@ -3860,6 +3860,8 @@
 - language: sql
   url: https://github.com/m-novikov/tree-sitter-sql
   ref: 587f30d184b058450be2a2330878210c5f33b3f9
+  skipScanner: true
+  note: Upstream scanner.cc rewritten to scanner.c to avoid C++ dependency
   metadata:
     hasParser: true
     hasScanner: true
