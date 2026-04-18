@@ -7,7 +7,7 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-const CSHARP = require("tree-sitter-c-sharp/grammar");
+const CSHARP = require("tree-sitter-c-sharp/grammar").default;
 
 module.exports = grammar(CSHARP, {
   name: "razor",
@@ -17,14 +17,31 @@ module.exports = grammar(CSHARP, {
   conflicts: ($, o) => [
     [$.razor_explicit_expression, $._expression_statement_expression],
 
+    [
+      $.preproc_if,
+      $.preproc_if_in_top_level,
+      $.preproc_if_in_expression,
+      $.preproc_if_in_attribute_list,
+    ],
     [$.preproc_if, $.preproc_if_in_top_level],
     [$.preproc_if, $.preproc_if_in_top_level, $.preproc_if_in_expression],
-    [$.preproc_else, $.preproc_else_in_top_level, $.preproc_else_in_expression],
+    [$.preproc_if, $.preproc_if_in_top_level, $.preproc_if_in_attribute_list],
+    [
+      $.preproc_else,
+      $.preproc_else_in_top_level,
+      $.preproc_else_in_expression,
+      $.preproc_else_in_attribute_list,
+    ],
     [$.declaration, $.preproc_if_in_top_level],
     [$.type_declaration, $.declaration],
-    [$.method_declaration, $.local_function_statement],
+    [$.method_declaration, $._local_function_declaration],
     [$.declaration, $.preproc_else_in_top_level],
-    [$.preproc_elif, $.preproc_elif_in_top_level, $.preproc_elif_in_expression],
+    [
+      $.preproc_elif,
+      $.preproc_elif_in_top_level,
+      $.preproc_elif_in_expression,
+      $.preproc_elif_in_attribute_list,
+    ],
 
     [$.destructor_declaration, $._simple_name],
 
@@ -93,7 +110,7 @@ module.exports = grammar(CSHARP, {
           $.razor_while,
           $.razor_do_while,
           $.razor_try,
-          $.razor_await_expression,
+          $.explicit_line_transition,
           $.razor_implicit_expression,
           $.razor_explicit_expression,
           $.razor_section,
@@ -198,12 +215,6 @@ module.exports = grammar(CSHARP, {
 
     razor_implicit_expression: ($) =>
       seq(alias($._razor_marker, "at_implicit"), prec.left($.expression)),
-
-    razor_await_expression: ($) =>
-      seq(
-        alias(seq($._razor_marker, "await"), "at_await"),
-        prec.right($.expression),
-      ),
 
     razor_lock: ($) =>
       seq(
@@ -378,7 +389,12 @@ module.exports = grammar(CSHARP, {
       ),
 
     explicit_line_transition: ($) =>
-      prec.left(seq(alias("@:", "at_colon_transition"), repeat1(/[^\n\r]+/))),
+      prec.left(
+        seq(
+          alias("@:", "at_colon_transition"),
+          alias(token(prec(1, /[^\n\r]+/)), $.element),
+        ),
+      ),
 
     razor_comment: ($) => seq("@*", optional($._razor_comment_text), "*@"),
     _razor_comment_text: (_) => repeat1(/.|\n|\r/),
@@ -412,11 +428,11 @@ module.exports = grammar(CSHARP, {
     _html_attribute_value: ($) =>
       seq(
         '"',
-        optional(
+        repeat(
           choice(
             $.razor_explicit_expression,
             $.razor_implicit_expression,
-            prec.left(/[a-zA-Z0-9-:/\.=>(){}\s]+/),
+            /[^"@]+/,
           ),
         ),
         '"',
