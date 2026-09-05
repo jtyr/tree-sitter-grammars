@@ -23,8 +23,8 @@ enum TokenType {
   KW_CMD_EXPR,     // commands with required expression: cd/evaluate
   // Style attribute keywords (was K.* regex tokens in grammar.js). Each has a
   // distinct grammar continuation, so they are distinct tokens (no N->1 merge);
-  // moved to the scanner to retire the reg() machinery (scanner-first, REWORK
-  // Phase 1). Order MUST match the externals list in grammar.js.
+  // moved to the scanner to retire the reg() machinery (scanner-first).
+  // Order MUST match the externals list in grammar.js.
   // KW_SA: the style attrs whose continuation is exactly `<kw> <expression>`
   // (linewidth/linestyle/pointinterval/pointnumber/arrowstyle/dashlength) collapsed
   // into ONE token (6->1, identical continuation -> shrinks the table). The rest
@@ -39,13 +39,37 @@ enum TokenType {
   // (GOPT_KWS) and tagged with their highlight tier. KW_G_AXISFLAG is the
   // (no)?m?<axis>tics family ((no)mxtics, x2tics, ...), only valid in
   // style-flavor bodies. Order MUST match the externals list in grammar.js.
-  KW_G_ARG, KW_G_FLAG, KW_G_MOD, KW_G_COORD, KW_G_AXISFLAG,
+  // KW_G_ARGV is the value-REQUIRED flavor of KW_G_ARG: its grammar branch has
+  // no `optional()` around the value, so the state right after the keyword
+  // admits only an expression and every keyword-table token drops out of
+  // valid_symbols there.
+  KW_G_ARG, KW_G_ARGV, KW_G_FLAG, KW_G_MOD, KW_G_COORD, KW_G_AXISFLAG,
   KW_G_AXISRANGE,  // autoscale-only: <axis>{min|max|fix|fixmin|fixmax}?
   // Zero-width separator between an arg/coord keyword and its value inside
   // generic bodies. Matches ONLY when the value is on the SAME logical line
   // (spaces/tabs or a \-newline continuation ahead) — a raw newline or ';'
   // declines, so a next-line identifier is a new statement, never a value.
   GVAL_SEP,
+  // Value-binding variant of GVAL_SEP, used only between an arg/coord tier
+  // keyword and its value inside _gopts items. Split from GVAL_SEP so the
+  // scanner can refuse to bind grammar-literal keywords (`font`) as values
+  // while option-head body gates (which use GVAL_SEP) still open.
+  GVAL_BIND,
+  // Detached angle unit `pi` in `binary rotate=<val> pi`. Own external token so
+  // valid_symbols can disambiguate against KW_SA's `pi` (pointinterval alias),
+  // which is valid in the SAME merged plot-element state.
+  UNIT_PI,
+  // Same-line gate for the cmd_bare (replot/refresh/...) plot-element tail.
+  // Identical to GVAL_SEP except it ALSO opens on '[', so `replot [0:1] x/2`
+  // reaches plot_element's leading range_block repeat. Own token so the ~70
+  // set/show body gates keep declining '['.
+  GVAL_TAIL,
+  // The word `if` opening a plot-element datafile filter. Emitted ONLY when the
+  // word sits on the same logical line as the element it attaches to; the
+  // grammar has no line boundaries, so without this an old-style
+  // `if (cond) <command>` statement on the line AFTER a plot command silently
+  // becomes that element's filter.
+  KW_FILTER_IF,
 };
 
 // Keyword table entry for prefix-abbreviation matching.
@@ -110,9 +134,9 @@ static bool match_kw_table(const char* word, int wlen, const KwEntry* table) {
   return false;
 }
 
-// Style attribute keywords (REWORK Phase 1). Like KwEntry but each maps to its
-// own token (distinct grammar continuations). min_chars/alt mirror the old
-// K.* reg() calls in grammar.js.
+// Style attribute keywords. Like KwEntry but each maps to its own token
+// (distinct grammar continuations). min_chars/alt mirror the old K.* reg()
+// calls in grammar.js.
 typedef struct {
   const char* keyword;
   const char* alt;
@@ -137,6 +161,21 @@ static const StyleKwEntry STYLE_KWS[] = {
     {"textcolor", "tc", 5, KW_TC},
     {NULL, NULL, 0, 0},
 };
+
+// Words that are gnuplot built-in CONSTANTS, never option keywords.
+static bool is_expr_constant(const char* w, int len) {
+  return (len == 2 && memcmp(w, "pi", 2) == 0) ||
+         (len == 3 && memcmp(w, "NaN", 3) == 0) ||
+         (len == 3 && memcmp(w, "Inf", 3) == 0);
+}
+
+// True inside the generic _gopts/_gopts_style bodies, where a bare expression
+// item is always a valid alternative — so a keyword-table hit on a constant
+// word is never what the author meant.
+static bool in_generic_body(const bool* v) {
+  return v[KW_G_ARG] || v[KW_G_FLAG] || v[KW_G_MOD] || v[KW_G_COORD] ||
+         v[KW_G_AXISFLAG] || v[KW_G_AXISRANGE];
+}
 
 // Match word against STYLE_KWS, returning the token if a currently-valid one
 // matches, else -1.
@@ -173,8 +212,8 @@ static const GoptKwEntry GOPT_KWS[] = {
     // cntrparam
     {"linear", 2, KW_G_MOD, 0},
     {"levels", 2, KW_G_ARG, 0},
-    {"cubicspline", 1, KW_G_ARG, 0},
-    {"bspline", 1, KW_G_ARG, 0},
+    {"cubicspline", 2, KW_G_ARG, 0},
+    {"bspline", 2, KW_G_ARG, 0},
     {"points", 1, KW_G_ARG, 0},
     {"order", 1, KW_G_ARG, 0},
     {"origin", 1, KW_G_ARG, 0},
@@ -190,9 +229,31 @@ static const GoptKwEntry GOPT_KWS[] = {
     {"errorbars", 5, KW_G_ARG, 0},
     // watch/textbox labels boxed toggle
     {"boxed", 5, KW_G_FLAG, 1},
+    // `set encoding` values. Enumerated names, so KW_G_MOD. min_chars probed
+    // against gnuplot 6.0.4 by RESOLUTION, not acceptance: each prefix is fed
+    // to `set encoding <p>; show encoding` and kept only when gnuplot reports
+    // back this same keyword. gnuplot resolves an ambiguous prefix to the
+    // first entry of its own table, so `iso` is iso_8859_1 and `koi8` is
+    // koi8r; the losing members of each family need their full name.
+    {"iso_8859_1", 3, KW_G_MOD, 0},
+    {"iso_8859_15", 11, KW_G_MOD, 0},
+    {"iso_8859_2", 10, KW_G_MOD, 0},
+    {"iso_8859_9", 10, KW_G_MOD, 0},
+    {"koi8r", 4, KW_G_MOD, 0},
+    {"koi8u", 5, KW_G_MOD, 0},
+    {"cp437", 3, KW_G_MOD, 0},
+    {"cp850", 5, KW_G_MOD, 0},
+    {"cp852", 5, KW_G_MOD, 0},
+    {"cp950", 5, KW_G_MOD, 0},
+    {"cp1250", 6, KW_G_MOD, 0},
+    {"cp1251", 6, KW_G_MOD, 0},
+    {"cp1252", 6, KW_G_MOD, 0},
+    {"cp1254", 6, KW_G_MOD, 0},
+    {"sjis", 2, KW_G_MOD, 0},
+    {"utf8", 3, KW_G_MOD, 0},
     // colorbox
-    {"vertical", 1, KW_G_FLAG, 1},
-    {"horizontal", 1, KW_G_ARG, 0},
+    {"vertical", 3, KW_G_FLAG, 1},  // `ve` is not accepted by gnuplot; `ver` is
+    {"horizontal", 3, KW_G_ARG, 0},  // NOT 1: gnuplot resolves `h` to `height`
     {"invert", 3, KW_G_FLAG, 1},
     {"user", 1, KW_G_ARG, 0},
     {"default", 3, KW_G_ARG, 0},
@@ -209,15 +270,15 @@ static const GoptKwEntry GOPT_KWS[] = {
     {"spiderplot", 6, KW_G_ARG, 0},
     // angles
     {"degrees", 1, KW_G_ARG, 0},
-    {"radians", 1, KW_G_ARG, 0},
+    {"radians", 2, KW_G_ARG, 0},
     // boxwidth / boxdepth
     {"absolute", 1, KW_G_ARG, 0},
     {"relative", 1, KW_G_ARG, 0},
     {"square", 6, KW_G_FLAG, 1},
     // clip
     {"one", 1, KW_G_ARG, 0},
-    {"two", 1, KW_G_ARG, 0},
-    {"radial", 1, KW_G_ARG, 0},
+    {"two", 2, KW_G_ARG, 0},
+    {"radial", 2, KW_G_ARG, 0},
     // colorsequence
     {"classic", 7, KW_G_MOD, 0},
     {"podo", 4, KW_G_MOD, 0},
@@ -288,15 +349,21 @@ static const GoptKwEntry GOPT_KWS[] = {
     {"y0", 2, KW_G_MOD, 0},
     {"y1", 2, KW_G_MOD, 0},
     {"z0", 2, KW_G_MOD, 0},
-    // theta direction words (bare l/r/t/b resolve via other arg rows)
+    // theta direction words. The position rows below own the bare letters:
+    // gnuplot reads `set k t l` as `top left`, so l/r/t/b/c carry min 1 and
+    // their one-letter rivals (two, radians, radial, bspline, cubicspline)
+    // sit at gnuplot's own 2-char minimums (tw/ra/ra/bs/cu, probed on 6.0.4).
+    // Cost, accepted: `set clip t`, `set angles r`, `set cntrparam b` now
+    // read the position word — same arg tier, one mislabelled leaf, no
+    // structural damage. An option-blind table cannot have both.
     {"counterclockwise", 16, KW_G_MOD, 0},
     {"clockwise", 9, KW_G_MOD, 0},
     {"ccw", 3, KW_G_MOD, 0},
     {"cw", 2, KW_G_MOD, 0},
-    {"left", 3, KW_G_ARG, 0},
-    {"right", 3, KW_G_ARG, 0},
-    {"top", 2, KW_G_ARG, 0},
-    {"bottom", 3, KW_G_ARG, 0},
+    {"left", 1, KW_G_ARG, 0},
+    {"right", 1, KW_G_ARG, 0},
+    {"top", 1, KW_G_ARG, 0},
+    {"bottom", 1, KW_G_ARG, 0},
     // view
     {"map", 3, KW_G_ARG, 0},
     {"scale", 5, KW_G_ARG, 0},
@@ -310,9 +377,9 @@ static const GoptKwEntry GOPT_KWS[] = {
     // size
     {"ratio", 2, KW_G_ARG, 1},
     // pixmap
-    {"width", 5, KW_G_ARG, 0},
+    {"width", 3, KW_G_ARG, 0},  // gnuplot accepts `w`; kept at 3 so a bare `w` stays a variable
     {"height", 6, KW_G_ARG, 0},
-    {"center", 6, KW_G_ARG, 0},
+    {"center", 1, KW_G_ARG, 0},
     {"behind", 6, KW_G_FLAG, 0},
     {"at", 2, KW_G_ARG, 0},
     {"colormap", 8, KW_G_ARG, 0},
@@ -327,7 +394,7 @@ static const GoptKwEntry GOPT_KWS[] = {
     // format
     {"numeric", 7, KW_G_MOD, 0},
     {"timedate", 8, KW_G_MOD, 0},
-    {"geographic", 10, KW_G_MOD, 0},
+    {"geographic", 3, KW_G_MOD, 0},
     // linetype
     {"cycle", 5, KW_G_ARG, 0},
     // termoption
@@ -401,7 +468,7 @@ static const GoptKwEntry GOPT_KWS[] = {
     {"opaque", 6, KW_G_FLAG, 1},
     {"reverse", 3, KW_G_FLAG, 1},
     {"samplen", 7, KW_G_ARG, 0},
-    {"spacing", 7, KW_G_ARG, 0},
+    {"spacing", 2, KW_G_ARG, 0},  // `set key sp 2` resolves to spacing
     {"keywidth", 4, KW_G_ARG, 0},
     {"columns", 7, KW_G_ARG, 0},
     {"maxcols", 6, KW_G_ARG, 0},
@@ -417,6 +484,179 @@ static const GoptKwEntry GOPT_KWS[] = {
     {"rmargin", 2, KW_G_ARG, 0},
     {"tmargin", 2, KW_G_ARG, 0},
     {"bmargin", 2, KW_G_ARG, 0},
+    // terminal options (t_opts generic conversion). min_chars mirror the old
+    // key()/reg() forms exactly (mostly full-word). Deliberately ABSENT:
+    // name/eps/input (common variable names — a global row would steal them
+    // from value positions in every generic body), reset/raise (command words
+    // on a following line would be swallowed by the body), font/position/
+    // background/animate (structured values, bespoke branches in t_opts),
+    // size/scale/width/title/default/clip/fixed/small/large (rows exist).
+    {"enhanced", 3, KW_G_FLAG, 1},
+    {"crop", 4, KW_G_FLAG, 1},
+    {"truecolor", 4, KW_G_FLAG, 1},
+    {"interlace", 5, KW_G_FLAG, 1},
+    {"anchor", 6, KW_G_MOD, 0},
+    {"scroll", 6, KW_G_FLAG, 0},
+    {"tiny", 4, KW_G_MOD, 0},
+    {"medium", 6, KW_G_MOD, 0},
+    {"giant", 5, KW_G_MOD, 0},
+    {"window", 6, KW_G_ARG, 0},
+    {"fsize", 5, KW_G_ARG, 0},
+    {"pointsmax", 9, KW_G_ARG, 0},
+    {"fontsize", 8, KW_G_ARG, 0},
+    {"pointscale", 10, KW_G_ARG, 0},
+    {"plotsize", 8, KW_G_ARG, 0},
+    {"charsize", 8, KW_G_ARG, 0},
+    {"resolution", 10, KW_G_ARG, 0},
+    {"palfuncparam", 12, KW_G_ARG, 0},
+    {"aspect", 6, KW_G_ARG, 0},
+    {"fillchar", 8, KW_G_ARG, 0},
+    {"jsdir", 5, KW_G_ARG, 0},
+    {"header", 6, KW_G_ARG, 1},
+    {"fontscale", 9, KW_G_ARG, 0},
+    {"rotate", 6, KW_G_FLAG, 1},
+    {"timestamp", 9, KW_G_FLAG, 1},
+    {"attributes", 10, KW_G_FLAG, 1},
+    {"feed", 4, KW_G_FLAG, 1},
+    {"replotonresize", 14, KW_G_FLAG, 1},
+    {"antialias", 9, KW_G_FLAG, 1},
+    {"persist", 7, KW_G_FLAG, 1},
+    {"ctrl", 4, KW_G_FLAG, 1},
+    {"ctrlq", 5, KW_G_FLAG, 1},
+    {"close", 5, KW_G_MOD, 0},
+    {"eject", 5, KW_G_MOD, 0},
+    {"noproportional", 14, KW_G_FLAG, 0},
+    {"originreset", 11, KW_G_FLAG, 1},
+    {"gparrows", 8, KW_G_FLAG, 1},
+    {"gppoints", 8, KW_G_FLAG, 1},
+    {"picenvironment", 14, KW_G_FLAG, 1},
+    {"tightboundingbox", 16, KW_G_FLAG, 1},
+    {"fulldoc", 7, KW_G_FLAG, 1},
+    {"standalone", 10, KW_G_FLAG, 1},
+    {"tikzarrows", 10, KW_G_FLAG, 1},
+    {"externalimages", 14, KW_G_FLAG, 1},
+    {"inlineimages", 12, KW_G_FLAG, 0},
+    {"noanimate", 9, KW_G_FLAG, 0},
+    {"auxfile", 7, KW_G_FLAG, 1},
+    {"pspoints", 8, KW_G_FLAG, 1},
+    {"mouse", 5, KW_G_MOD, 0},
+    {"pdf", 3, KW_G_MOD, 0},
+    {"png", 3, KW_G_MOD, 0},
+    {"level1", 6, KW_G_MOD, 0},
+    {"leveldefault", 12, KW_G_MOD, 0},
+    {"level3", 6, KW_G_MOD, 0},
+    {"blacktext", 9, KW_G_MOD, 0},
+    {"colortext", 9, KW_G_MOD, 0},
+    {"colourtext", 10, KW_G_MOD, 0},
+    {"landscape", 9, KW_G_MOD, 0},
+    {"portrait", 8, KW_G_MOD, 0},
+    {"big", 3, KW_G_MOD, 0},
+    {"solid", 5, KW_G_MOD, 0},
+    {"dashed", 6, KW_G_MOD, 0},
+    {"defaultplex", 11, KW_G_MOD, 0},
+    {"simplex", 7, KW_G_MOD, 0},
+    {"duplex", 6, KW_G_MOD, 0},
+    {"mitered", 7, KW_G_MOD, 0},
+    {"beveled", 7, KW_G_MOD, 0},
+    {"mpoints", 7, KW_G_MOD, 0},
+    {"texpoints", 9, KW_G_MOD, 0},
+    {"texarrows", 9, KW_G_MOD, 0},
+    {"smallpoints", 11, KW_G_MOD, 0},
+    {"tinypoints", 10, KW_G_MOD, 0},
+    {"normalpoints", 12, KW_G_MOD, 0},
+    {"textnormal", 10, KW_G_MOD, 0},
+    {"textspecial", 11, KW_G_MOD, 0},
+    {"texthidden", 10, KW_G_MOD, 0},
+    {"textrigid", 9, KW_G_MOD, 0},
+    {"mono", 4, KW_G_MOD, 0},
+    {"ansi", 4, KW_G_MOD, 0},
+    {"ansi256", 7, KW_G_MOD, 0},
+    {"ansirgb", 7, KW_G_MOD, 0},
+    {"latex", 5, KW_G_MOD, 0},
+    {"tex", 3, KW_G_MOD, 0},
+    {"context", 7, KW_G_MOD, 0},
+    {"dynamic", 7, KW_G_MOD, 0},
+    // tkcanvas (script-language alternatives + toggles). perltkx before perl
+    // (prefix rule). All full-word: short language names are plausible
+    // identifiers, so no abbreviation.
+    {"perltkx", 7, KW_G_MOD, 0},
+    {"perl", 4, KW_G_MOD, 0},
+    {"tcl", 3, KW_G_MOD, 0},
+    {"python", 6, KW_G_MOD, 0},
+    {"ruby", 4, KW_G_MOD, 0},
+    {"rexx", 4, KW_G_MOD, 0},
+    {"interactive", 11, KW_G_FLAG, 0},
+    {"rottext", 7, KW_G_FLAG, 1},
+    {"pixels", 6, KW_G_MOD, 0},
+    // pstricks (output flavor + arrows + unit sizing). `unit` must stay after
+    // the `units` row above (first match wins; units min 5 so bare `unit`
+    // falls through here). nopstricks/nopsarrows rejected live (6.0.4),
+    // nounit accepted — no_prefix set accordingly.
+    {"pstricks", 8, KW_G_MOD, 0},
+    {"pdftricks2", 10, KW_G_MOD, 0},
+    {"psarrows", 8, KW_G_FLAG, 0},
+    {"unit", 4, KW_G_MOD, 1},
+    // tics (tics_opts generic conversion). rotate/enhanced/offset/justify
+    // arrive via existing rows or the style_opts branch. NOT rows: in/out
+    // (for-loop keyword / common variable — degrade to identifier items),
+    // "log" alone (log() is a builtin: logscale min 4, like the no-int rule)
+    {"axis", 4, KW_G_MOD, 0},
+    {"mirror", 2, KW_G_FLAG, 1},  // `set xtics nomi` is valid; `min` stays builtin
+    {"add", 3, KW_G_ARG, 0},
+    {"autofreq", 4, KW_G_ARG, 0},
+    // effective from "autoj": shorter prefixes hit the autotitle row first
+    {"autojustify", 2, KW_G_ARG, 0},
+    {"by", 2, KW_G_ARGV, 0},
+    {"format", 6, KW_G_ARG, 0},
+    {"logscale", 4, KW_G_FLAG, 1},
+    {"rangelimited", 5, KW_G_FLAG, 1},
+    // "time" full word only ("tim"/"t" are variables in 6.0.4); can't shadow
+    // the timedate/timestamp rows — a word longer than a row's keyword never
+    // matches it. Enables `set xtics format "%b %d" time` (as an identifier
+    // the body used to stop at the statement boundary after the bound value)
+    {"time", 4, KW_G_MOD, 0},
+    // fit ("log"/"min"/"exp" stay identifiers — builtins; "error" hits the
+    // errorbars row first: mislabeled tier, still parses)
+    // explicit no-form: gnuplot accepts `nolog` (5 chars) while bare `log`
+    // stays min 4 (builtin function) — the generic no-strip can't reach it
+    {"nologfile", 5, KW_G_FLAG, 0},
+    {"logfile", 4, KW_G_ARG, 1},
+    {"results", 7, KW_G_MOD, 0},
+    {"brief", 5, KW_G_MOD, 0},
+    {"errorvariables", 3, KW_G_FLAG, 1},
+    {"covariancevariables", 3, KW_G_FLAG, 1},
+    {"errorscaling", 6, KW_G_FLAG, 1},
+    {"prescale", 8, KW_G_FLAG, 1},
+    {"maxiter", 7, KW_G_ARG, 0},
+    {"limit_abs", 9, KW_G_ARG, 0},
+    {"limit", 5, KW_G_ARG, 0},
+    {"script", 6, KW_G_MOD, 0},
+    {"v4", 2, KW_G_MOD, 0},
+    {"v5", 2, KW_G_MOD, 0},
+    // dgrid3d / polar grid kernels
+    {"splines", 7, KW_G_MOD, 0},
+    {"qnorm", 5, KW_G_ARG, 0},
+    {"gauss", 5, KW_G_MOD, 0},
+    {"cauchy", 6, KW_G_MOD, 0},
+    {"hann", 4, KW_G_MOD, 0},
+    {"kdensity", 8, KW_G_MOD, 0},
+    // mxtics time units ("sec".."second" abbreviations hit the coord row)
+    {"seconds", 3, KW_G_MOD, 0},
+    {"minutes", 4, KW_G_MOD, 0},
+    {"hours", 4, KW_G_MOD, 0},
+    {"days", 3, KW_G_MOD, 0},
+    {"weeks", 4, KW_G_MOD, 0},
+    {"months", 3, KW_G_MOD, 0},
+    {"years", 4, KW_G_MOD, 0},
+    // x*label
+    {"parallel", 8, KW_G_MOD, 0},
+    // polar grid theta range (`theta [0:pi]`): without a row the identifier
+    // glues to the bracket as an array subscript. Bare `r [0:1]` keeps that
+    // limitation — `r` is far too common a variable for a global row.
+    {"theta", 5, KW_G_ARG, 0},
+    // surface (explicit min 4 — exp() is a builtin)
+    {"implicit", 3, KW_G_MOD, 0},
+    {"explicit", 4, KW_G_MOD, 0},
     {NULL, 0, 0, 0},
 };
 
@@ -505,6 +745,8 @@ static const CmdKwEntry CMD_KWS[] = {
     {"splot", 2, CMD_SPLOT_KW},
     {"pause", 2, CMD_PAUSE_KW},
     {"print", 2, CMD_PRINT_KW},
+    // Longer than "print", so the row above can never shadow it.
+    {"printerror", 8, CMD_PRINT_KW},
     {"help", 2, CMD_HELP_KW},
     {"load", 1, CMD_LOAD_KW},
     // Argument-less commands collapsed into one token:
@@ -521,6 +763,7 @@ static const CmdKwEntry CMD_KWS[] = {
     {"lower", 3, KW_CMD_OPTEXPR},
     {"vclear", 6, KW_CMD_OPTEXPR},
     {"toggle", 6, KW_CMD_OPTEXPR},
+    {"warn", 4, KW_CMD_OPTEXPR},
     {"exit", 2, KW_CMD_EXIT},
     {"quit", 1, KW_CMD_EXIT},
     // Commands followed by one required expression:
@@ -681,13 +924,23 @@ static bool is_assignment_context(TSLexer* lexer) {
 // the plot-element tail, statement-start command tokens AND style attrs are both
 // valid), and tree-sitter resets the lexer between scanner invocations but NOT
 // between sub-scanners, so the word must be consumed exactly once.
-static bool scan_keywords(TSLexer* lexer, const bool* valid_symbols, bool any_cmd_valid) {
+static bool scan_keywords(TSLexer* lexer, const bool* valid_symbols, bool any_cmd_valid,
+                          bool same_line) {
   char word[24];
   int word_len = read_word(lexer, word, sizeof(word));
   if (word_len < 0)
     return false;
 
   lexer->mark_end(lexer);  // mark end of keyword token before lookahead
+
+  // Plot-element filter `if` — same-line only (see KW_FILTER_IF). On a new
+  // logical line the scan declines and the internal lexer produces the cmd_if
+  // literal instead, so the statement is not swallowed as a filter.
+  if (valid_symbols[KW_FILTER_IF] && same_line && word_len == 2 &&
+      word[0] == 'i' && word[1] == 'f') {
+    lexer->result_symbol = KW_FILTER_IF;
+    return true;
+  }
 
   // Command keywords (statement-start). The assignment-context guard keeps
   // `plot = 1` an assignment rather than the plot command.
@@ -703,6 +956,32 @@ static bool scan_keywords(TSLexer* lexer, const bool* valid_symbols, bool any_cm
       }
     }
   }
+
+  // Detached angle unit `pi` (binary rotate=<val> pi). Checked BEFORE the
+  // style-attr table: in plot/splot elements KW_SA is valid in the same state
+  // (`pi` = pointinterval), and gnuplot resolves the word as the unit there.
+  // UNIT_PI is only valid right after a rotate= value, so pointinterval `pi`
+  // keeps working everywhere else.
+  if (valid_symbols[UNIT_PI] && word_len == 2 && memcmp(word, "pi", 2) == 0) {
+    lexer->result_symbol = UNIT_PI;
+    return true;
+  }
+
+  // Constant words decline every keyword table inside generic option bodies:
+  // there a bare expression is always a legal item, so `rotate by pi` means the
+  // number, not the `pi`(=pointinterval) abbreviation. Style bodies (plot
+  // elements, `set style line ...`) are unaffected — no KW_G_* is valid there,
+  // so `pi 5` keeps parsing as pointinterval.
+  if (in_generic_body(valid_symbols) && is_expr_constant(word, word_len))
+    return false;
+
+  // A word immediately followed by '.' inside a generic body is string concat
+  // on a variable (`set print pal.'.gp'`): decline every keyword table so the
+  // internal lexer produces the identifier and the item parses as an
+  // expression. Spaced leading-dot numbers (`at graph .5`) are unaffected —
+  // their '.' is not adjacent to the word.
+  if (in_generic_body(valid_symbols) && lexer->lookahead == '.')
+    return false;
 
   // Plot style names take priority over style attrs (e.g. "lines" is the style,
   // not linestyle).
@@ -739,10 +1018,14 @@ static bool scan_keywords(TSLexer* lexer, const bool* valid_symbols, bool any_cm
 bool tree_sitter_gnuplot_external_scanner_scan(void* payload, TSLexer* lexer, const bool* valid_symbols) {
   Scanner* s = (Scanner*)payload;
 
-  // GVAL_SEP: zero-width, same-line only. Must run BEFORE skip_whitespaces
-  // (which also skips newlines and ';'). Skips spaces/tabs and \-newline
-  // continuations; succeeds iff the next content is on the same logical line.
-  if (valid_symbols[GVAL_SEP]) {
+  // GVAL_SEP/GVAL_BIND: zero-width, same-line only. Must run BEFORE
+  // skip_whitespaces (which also skips newlines and ';'). Skips spaces/tabs
+  // and \-newline continuations; succeeds iff the next content is on the
+  // same logical line. When both are valid, the body gate (GVAL_SEP) wins.
+  // GVAL_TAIL is the cmd_bare variant: same semantics plus '[' opens it.
+  if (valid_symbols[GVAL_SEP] || valid_symbols[GVAL_BIND] || valid_symbols[GVAL_TAIL]) {
+    const int SEP = valid_symbols[GVAL_SEP] ? GVAL_SEP
+                  : (valid_symbols[GVAL_BIND] ? GVAL_BIND : GVAL_TAIL);
     for (;;) {
       if (lexer->lookahead == ' ' || lexer->lookahead == '\t' || lexer->lookahead == '\r') {
         skip(lexer);
@@ -772,18 +1055,51 @@ bool tree_sitter_gnuplot_external_scanner_scan(void* payload, TSLexer* lexer, co
         // If the word is immediately used in expression syntax (operator,
         // call, subscript, comma), it is a VALUE even when it matches a
         // keyword row: `palette functions gray,1,1`, `samples points(3)`.
+        // '-'/'+' are NOT in this set: a following sign is far more often a
+        // signed value of the keyword (`levels incremental -20, 5, 20`) than
+        // `kw - x` arithmetic on a variable shadowing a keyword name.
+        // '.' splits on spacing. IMMEDIATELY after the word it is string
+        // concat on a variable (`set print pal.'.gp'`) — the word is a value;
+        // the eccentric `set size.5` (gnuplot tokenizes it as `size .5`)
+        // degrades to a value expression, still a valid tree. With space
+        // before it, a leading-dot number follows a keyword (`at graph .5`)
+        // and the keyword must win; mark_end cannot rewind, so the spaced
+        // form cannot be probed past the dot.
+        if (lexer->lookahead == '.') {
+          lexer->result_symbol = SEP;
+          return true;
+        }
         {
           int32_t c = lexer->lookahead;
           while (c == ' ' || c == '\t') { consume(lexer); c = lexer->lookahead; }
-          if (c == ',' || c == '+' || c == '-' || c == '*' || c == '/' ||
-              c == '%' || c == '^' || c == '(' || c == '[' || c == '.' ||
+          if (c == ',' || c == '*' || c == '/' ||
+              c == '%' || c == '^' || c == '(' || c == '[' ||
               c == '=' || c == '<' || c == '>' || c == '&' || c == '|' ||
               c == '?' || c == ':') {
-            lexer->result_symbol = GVAL_SEP;
+            lexer->result_symbol = SEP;
             return true;
           }
         }
         if (word_ended) {
+          // "font" is a grammar-level literal (fontspec), not a scanner row:
+          // emitting GVAL_BIND here would bind it as the previous keyword's
+          // value (`set style watchpoint labels font "..."`); declining the
+          // scan lets the internal lexer produce the literal instead. Body
+          // gates (GVAL_SEP) still open — fontspec is a valid first item.
+          if (plen == 4 && memcmp(peek, "font", 4) == 0) {
+            if (valid_symbols[GVAL_SEP]) {
+              lexer->result_symbol = GVAL_SEP;
+              return true;
+            }
+            return false;
+          }
+          // Same constant denylist as scan_keywords: inside a generic body a
+          // constant word is a value, so bind it as one instead of letting a
+          // keyword table steal it.
+          if (in_generic_body(valid_symbols) && is_expr_constant(peek, plen)) {
+            lexer->result_symbol = SEP;
+            return true;
+          }
           int s = match_style_kw(peek, plen, valid_symbols);
           if (s < 0 && valid_symbols[KW_G_AXISRANGE] && match_axis_word(peek, plen, 1))
             s = KW_G_AXISRANGE;
@@ -797,23 +1113,53 @@ bool tree_sitter_gnuplot_external_scanner_scan(void* payload, TSLexer* lexer, co
             return true;
           }
         }
-        lexer->result_symbol = GVAL_SEP;
+        lexer->result_symbol = SEP;
         return true;
       }
       // Non-word ahead: emit the separator only for characters that can
       // start an expression ('[' starts a range_block item, not a value).
+      // ',' opens bodies whose first positional slot may be EMPTY
+      // (`set view ,,0.5`, `set dummy ,v`); in bodies without a comma item
+      // the parse fails on the ',' itself, exactly as it did at the gate.
+      // '{' starts a complex literal (`print {1,2}`); no option head takes a
+      // brace, so there the parse fails on the '{' itself, same as at the gate.
       {
         int32_t c = lexer->lookahead;
         if ((c >= '0' && c <= '9') || c == '.' || c == '"' || c == '\'' ||
             c == '(' || c == '-' || c == '+' || c == '~' || c == '!' ||
-            c == '$' || c == '@') {
-          lexer->result_symbol = GVAL_SEP;
+            c == '$' || c == '@' || c == ',' || c == '{' ||
+            // '[' opens plot_element's leading range_block — cmd_bare tail only
+            (c == '[' && SEP == GVAL_TAIL)) {
+          lexer->result_symbol = SEP;
           return true;
         }
       }
     }
     // Declined: fall through — other externals (next statement's command
     // keyword, datablock end, ...) may still match from here.
+  }
+
+  // Same-line probe for the plot-element filter `if`. Must run BEFORE
+  // skip_whitespaces (which crosses newlines and ';'). Only skip() is used, so
+  // the position is left exactly where skip_whitespaces would take over and the
+  // sub-scanners below are unaffected. Falls through either way — never an
+  // early return, which would starve the other sub-scanners of this state.
+  bool same_line = true;
+  if (valid_symbols[KW_FILTER_IF]) {
+    for (;;) {
+      if (lexer->lookahead == ' ' || lexer->lookahead == '\t' || lexer->lookahead == '\r') {
+        skip(lexer);
+      } else if (lexer->lookahead == '\\') {
+        skip(lexer);
+        if (lexer->lookahead == '\r') skip(lexer);
+        if (lexer->lookahead == '\n') skip(lexer);
+      } else {
+        break;
+      }
+    }
+    if (lexer->lookahead == '\n' || lexer->lookahead == ';' || lexer->lookahead == '#' ||
+        lexer->lookahead == 0)
+      same_line = false;
   }
 
   skip_whitespaces(lexer);
@@ -846,12 +1192,13 @@ bool tree_sitter_gnuplot_external_scanner_scan(void* payload, TSLexer* lexer, co
       valid_symbols[KW_TC];
 
   bool any_gopt_valid =
-      valid_symbols[KW_G_ARG] || valid_symbols[KW_G_FLAG] || valid_symbols[KW_G_MOD] ||
-      valid_symbols[KW_G_COORD] || valid_symbols[KW_G_AXISFLAG] ||
+      valid_symbols[KW_G_ARG] || valid_symbols[KW_G_ARGV] || valid_symbols[KW_G_FLAG] ||
+      valid_symbols[KW_G_MOD] || valid_symbols[KW_G_COORD] || valid_symbols[KW_G_AXISFLAG] ||
       valid_symbols[KW_G_AXISRANGE];
 
-  if ((any_cmd_valid || any_style_valid || any_gopt_valid) &&
-      scan_keywords(lexer, valid_symbols, any_cmd_valid)) {
+  if ((any_cmd_valid || any_style_valid || any_gopt_valid || valid_symbols[UNIT_PI] ||
+       valid_symbols[KW_FILTER_IF]) &&
+      scan_keywords(lexer, valid_symbols, any_cmd_valid, same_line)) {
     return true;
   }
 

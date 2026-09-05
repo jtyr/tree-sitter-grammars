@@ -121,6 +121,9 @@ module.exports = grammar({
     // all the options and pick the best one that doesn't error out.
     [$.try_expression, $._unary_expression],
     [$.try_expression, $._expression],
+    // `try await foo()!` is ambiguous between `(try await foo())!` and `try (await foo())!` until the postfix
+    // operator is consumed; parse both and pick the survivor.
+    [$.try_expression, $._primary_expression],
     // await {expression} has the same special cases as `try`.
     [$.await_expression, $._unary_expression],
     [$.await_expression, $._expression],
@@ -220,6 +223,7 @@ module.exports = grammar({
     $._conjunction_operator_custom,
     $._disjunction_operator_custom,
     $._nil_coalescing_operator_custom,
+    $._double_optional_custom,
     $._eq_custom,
     $._eq_eq_custom,
     $._plus_then_ws,
@@ -493,11 +497,9 @@ module.exports = grammar({
           repeat1(
             choice(
               alias($._immediate_quest, "?"),
-              // The external scanner always tokenizes `??` as NIL_COALESCING_OPERATOR.
-              // In type position (e.g. `(v: AnyObject??)`) that single token represents
-              // two consecutive optional markers; accept it here since nil-coalescing is
-              // an expression-only construct and cannot appear in a type.
-              alias($._nil_coalescing_operator, "??")
+              // The scanner keeps an immediate `??` type suffix distinct from a
+              // nil-coalescing operator that follows whitespace.
+              alias($._double_optional, "??")
             )
           )
         )
@@ -852,6 +854,10 @@ module.exports = grammar({
               prec.right(-2, $._expression),
               prec.left(0, $._binary_expression),
               prec.left(0, $.call_expression),
+              // Also special-case `try await foo()`: without this, the `await_expression` is only reachable through
+              // the low-precedence `_expression` branch, so `if let x = try await foo() { ... }` resolves the `{` as
+              // a trailing closure on `foo()` instead of the if-body.
+              prec.left(0, $.await_expression),
               // Similarly special case the ternary expression, where `try` may come earlier than it is actually needed.
               // When the parser just encounters some identifier after a `try`, it should prefer the `call_expression` (so
               // this should be lower in priority than that), but when we encounter an ambiguous expression that might be
@@ -1126,11 +1132,13 @@ module.exports = grammar({
         choice(
           seq(
             "case",
-            seq(
-              $.switch_pattern,
-              optional(seq($.where_keyword, $._expression))
-            ),
-            repeat(seq(",", $.switch_pattern))
+            sep1(
+              seq(
+                $.switch_pattern,
+                optional(seq($.where_keyword, $._expression))
+              ),
+              ","
+            )
           ),
           $.default_keyword
         ),
@@ -1723,6 +1731,7 @@ module.exports = grammar({
     _disjunction_operator: ($) => alias($._disjunction_operator_custom, "||"),
     _nil_coalescing_operator: ($) =>
       alias($._nil_coalescing_operator_custom, "??"),
+    _double_optional: ($) => alias($._double_optional_custom, "??"),
     _as: ($) => alias($._as_custom, "as"),
     _as_quest: ($) => alias($._as_quest_custom, "as?"),
     _as_bang: ($) => alias($._as_bang_custom, "as!"),

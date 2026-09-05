@@ -31,15 +31,52 @@
 (block_lit
   (identifier) @property)
 
-; Extension option names, e.g. option (foo.bar) = ...
-(option
-  (full_ident
+; Extension names and Any type URLs in aggregate option values,
+; e.g. { [foo.bar]: 1 } and { [type.googleapis.com/foo.Bar]: {} }
+(extension_name
+  name: (full_ident
     (identifier) @variable))
 
+(extension_name
+  type: (full_ident
+    (identifier) @type))
+
+; Extension option names, e.g. option (foo.bar) = ...
+; Also matches field/enum-value options, e.g. [(foo.bar) = ...]
+[
+  (option
+    (full_ident
+      (identifier) @variable))
+  (field_option
+    (full_ident
+      (identifier) @variable))
+  (enum_value_option
+    (full_ident
+      (identifier) @variable))
+]
+
+[
+  (option
+    (full_ident
+      (identifier)
+      (identifier) @variable.member))
+  (field_option
+    (full_ident
+      (identifier)
+      (identifier) @variable.member))
+  (enum_value_option
+    (full_ident
+      (identifier)
+      (identifier) @variable.member))
+]
+
+; Bare option names, e.g. option java_package = ...
+; Also matches the trailing segments of a parenthesized name,
+; e.g. option (foo.bar).baz = ...
+; Matches the @property treatment of bare field_option/enum_value_option
+; names below, since these all name a field on a proto *Options message.
 (option
-  (full_ident
-    (identifier)
-    (identifier) @variable.member))
+  (identifier) @property)
 
 [
   "option"
@@ -103,13 +140,15 @@
 
 (string) @string
 
+; reserved names are their own node type rather than (string), so they need
+; their own rule - without it they are the only unhighlighted literal.
+(reserved_identifier) @string
+
 (import
   path: (string) @string.special.path)
 
-[
-  "\"proto3\""
-  "\"proto2\""
-] @string.special.symbol
+(syntax
+  version: (string) @string.special.symbol)
 
 (escape_sequence) @string.escape
 
