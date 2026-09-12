@@ -10,8 +10,10 @@
 const commaSeparatedList = (rule) =>
   seq(rule, repeat(seq(',', rule)), optional(','));
 
-module.exports = grammar({
+export default grammar({
   name: 'wit',
+
+  word: $ => $.id,
 
   extras: $ => [
     /\s/,
@@ -31,6 +33,14 @@ module.exports = grammar({
     $._typedef_item,
   ],
 
+  conflicts: $ => [
+    // `import a: b`:
+    //   * (`a` -> import target)  (`b` -> interface `use_path`)
+    //   * OR `a:b` may be the start of a `use_path` ex: `import a:b/c;`
+    [$._uri_head, $.import_item],
+    [$._uri_head, $.export_item],
+  ],
+
   rules: {
     source_file: ($) =>
       seq(
@@ -39,26 +49,45 @@ module.exports = grammar({
 
     _statement: $ => choice(
       $.package_decl,
+      $.nested_package_definition,
+      $._package_items,
+    ),
+
+    _package_items: $ => choice(
       $.toplevel_use_item,
       $.world_item,
       $.interface_item,
     ),
 
+    nested_package_definition: $ =>
+      seq(
+        $.decl_head,
+        '{',
+        repeat($._package_items),
+        '}',
+      ),
 
-    // URI patterns shared between `use_path` and `package_decl`
+
+    // URI patterns shared between `use_path` and `decl_head`.
     _uri_head: $ => seq($.id, ':'),
     _uri_tail: $ => seq('/', $.id),
     _version: $ => seq('@', alias($._valid_semver, $.version)),
 
-    package_decl: ($) =>
+    // Shared header for both `package_decl` (terminated with `;`) and
+    // `nested_package_definition` (followed by a `{ ... }` block).
+    decl_head: $ =>
       seq(
         'package',
         repeat1($._uri_head),
         $.id,
         repeat($._uri_tail),
         optional($._version),
-        ';',
       ),
+
+    // Semicolon is not explicitly tied to the EBNF grammar:
+    // https://github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md#top-level-items
+    // wit-file ::= (package-decl ';')? (package-items | nested-package-definition)*
+    package_decl: ($) => seq($.decl_head, ';'),
 
     toplevel_use_item: ($) =>
       seq(
@@ -83,41 +112,54 @@ module.exports = grammar({
     id: ($) =>
       /%?(([a-z][a-z0-9]*|[A-Z][A-Z0-9]*))(-([a-z][a-z0-9]*|[A-Z][A-Z0-9]*))*/,
 
+    // https://github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md#string-literals
+    // WIT string literals are double-quoted and use the same text format as
+    // the core WebAssembly text format's [`name`](https://webassembly.github.io/spec/core/text/values.html#text-name) literal:
+    //  - regular chars: any code point >= U+20 but NOT: U+7F, `"`, `\`
+    //  - escapes: `\t` `\n` `\r` `\"` `\'` `\\`
+    //  - byte escape:   \XX  (two hex digits)
+    //  - unicode escape: \u{HEX+} < U+10FFFF
+    string_literal: _ =>
+      /"([^\x00-\x1F\x7F"\\]|\\[tnr"'\\]|\\[0-9A-Fa-f][0-9A-Fa-f]|\\u\{[0-9A-Fa-f]+\})*"/,
+
     // As per https://semver.org/, this regex allows for trailing metadata after MAJOR.MINOR.PATCH
     _valid_semver: ($) =>
       /(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?/,
+
 
     world_item: ($) =>
       seq(optional($._gate), 'world', field('name', $.id), alias($._world_body, $.body)),
 
     _world_body: ($) =>
-      seq('{', repeat($._world_items), '}'),
+      seq('{', repeat(seq(optional($._gate), $._world_items)), '}'),
 
     _world_items: ($) =>
-      seq(
-        optional($._gate),
-        choice(
-          $.export_item,
-          $.import_item,
-          $.use_item,
-          $._typedef_item,
-          $.include_item,
-        )),
+      choice(
+        $.export_item,
+        $.import_item,
+        $.use_item,
+        $._typedef_item,
+        $.include_item,
+      ),
 
     export_item: ($) =>
       choice(
-        seq('export', field('name', $.id), ':', $.extern_type),
+        seq(optional($.external_id), 'export', field('name', $.id), ':', $.extern_type),
         seq('export', $.use_path, ';'),
       ),
 
     import_item: ($) =>
       choice(
-        seq('import', field('name', $.id), ':', $.extern_type),
+        seq(optional($.external_id), 'import', field('name', $.id), ':', $.extern_type),
         seq('import', $.use_path, ';'),
       ),
 
     extern_type: ($) =>
-      choice(seq($.func_type, ';'), seq('interface', alias($._interface_body, $.body))),
+      choice(
+        seq($.func_type, ';'),
+        seq('interface', alias($._interface_body, $.body)),
+        seq($.use_path, ';'),
+      ),
 
     include_item: ($) =>
       choice(
@@ -134,27 +176,25 @@ module.exports = grammar({
       seq('{', $._include_names_list, '}'),
 
     _include_names_list: ($) =>
-      commaSeparatedList( $.include_names_item),
-    include_names_item: ($) => $.alias_item,
+      commaSeparatedList($.include_names_item),
+
+    include_names_item: ($) => seq(field('path', $.id), 'as', field('alias', $.id)),
 
     alias_item: $ =>
       seq(field('path', $.id), 'as', field('alias', $.id)),
-    include_names_item: ($) => seq($.id, 'as', $.id),
 
     interface_item: ($) =>
       seq(optional($._gate), 'interface', field('name', $.id), alias($._interface_body, $.body)),
 
     _interface_body: ($) =>
-      seq('{', repeat($._interface_items), '}'),
+      seq('{', repeat(seq(optional($._gate), $._interface_items)), '}'),
 
     _interface_items: ($) =>
-      seq(
-        optional($._gate),
-        choice(
-          $._typedef_item,
-          $.use_item,
-          $.func_item,
-        )),
+      choice(
+        $.use_item,
+        seq(optional($.external_id), $._typedef_item),
+        seq(optional($.external_id), $.func_item),
+      ),
 
     _typedef_item: ($) =>
       choice(
@@ -204,19 +244,19 @@ module.exports = grammar({
     record_item: ($) =>
       seq('record', field('name', $.id), alias($._record_body, $.body)),
     _record_body: ($) => seq('{', $._record_fields, '}'),
-    _record_fields: ($) => commaSeparatedList($.record_field),
+    _record_fields: ($) => commaSeparatedList(seq(optional($._gate), $.record_field)),
     record_field: ($) => seq(field('name', $.id), ':', field('type', $.ty)),
 
     flags_items: ($) => seq('flags', field('name', $.id), alias($._flags_body, $.body)),
     _flags_body: ($) => seq('{', $._flags_fields, '}'),
-    _flags_fields: ($) => commaSeparatedList(alias($.id, $.flags_field)),
+    _flags_fields: ($) => commaSeparatedList(seq(optional($._gate), alias($.id, $.flags_field))),
 
     variant_items: ($) =>
       seq('variant', field('name', $.id), alias($._variant_body, $.body)),
     _variant_body: ($) =>
       seq('{', $._variant_cases, '}'),
 
-    _variant_cases: ($) => commaSeparatedList($.variant_case),
+    _variant_cases: ($) => commaSeparatedList(seq(optional($._gate), $.variant_case)),
     variant_case: ($) =>
       choice(
         field('name', $.id),
@@ -225,7 +265,7 @@ module.exports = grammar({
 
     enum_items: ($) => seq('enum', field('name', $.id), alias($._enum_body, $.body)),
     _enum_body: ($) => seq('{', $._enum_cases, '}'),
-    _enum_cases: ($) => commaSeparatedList(alias($.id, $.enum_case)),
+    _enum_cases: ($) => commaSeparatedList(seq(optional($._gate), alias($.id, $.enum_case))),
 
     resource_item: ($) =>
       seq(
@@ -234,42 +274,45 @@ module.exports = grammar({
         choice(';', optional(alias($._resource_body, $.body))),
       ),
 
-    _resource_body: ($) => seq('{', repeat($.resource_method), '}'),
+    _resource_body: ($) => seq(
+      '{', repeat(seq(optional($._gate), optional($.external_id), $.resource_method)), '}'),
 
     resource_method: ($) =>
       choice(
         $.func_item,
-        seq($.id, ':', 'static', $.func_type, ';'),
-        seq('constructor', $.param_list, ';'),
+        seq(field('name', $.id), ':', 'static', $.func_type, ';'),
+        seq('constructor', $.param_list, optional($.result_list), ';'),
       ),
+
+    // Primitive types shared between `ty` and `kt` ([map] key types).
+    // no floating points
+    _primitive_ty: _ => choice(
+      'u8', 'u16', 'u32', 'u64',
+      's8', 's16', 's32', 's64',
+      'char', 'bool', 'string',
+    ),
 
     ty: ($) =>
       prec(
         1,
         choice(
-          'u8',
-          'u16',
-          'u32',
-          'u64',
-          's8',
-          's16',
-          's32',
-          's64',
+          $._primitive_ty,
           'f32',
           'f64',
-          'char',
-          'bool',
-          'string',
           $.tuple,
           $.list,
           $.option,
           $.result,
+          $.map,
           $.id,
           $.handle,
           $.future,
           $.stream,
         ),
       ),
+
+    // https://github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md#types
+    kt: $ => $._primitive_ty,
 
     tuple: ($) => seq('tuple', '<', $.tuple_list, '>'),
 
@@ -284,6 +327,8 @@ module.exports = grammar({
     ),
 
     option: ($) => seq('option', '<', $.ty, '>'),
+
+    map: ($) => seq('map', '<', field('key', $.kt), ',', field('value', $.ty), '>'),
 
     result: ($) =>
       seq(
@@ -357,6 +402,8 @@ module.exports = grammar({
       $.since_gate,
       $.deprecated_gate,
     ),
+
+    external_id: $ => seq('@', 'external-id', '(', field('id', $.string_literal), ')'),
 
     unstable_gate: $ => seq( '@', 'unstable', '(', $._feature_field, ')'),
     _feature_field: $ => seq('feature', '=', field('feature', $.id)),
