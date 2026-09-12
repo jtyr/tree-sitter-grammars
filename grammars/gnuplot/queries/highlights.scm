@@ -3,9 +3,20 @@
 
 "variable" @variable.parameter
 
-; built-in named values (palette presets, special color names)
-; TODO: decide and collapse (bgnd & background same)
-; black/viridis constant?
+;
+; UNTIERED LITERALS — why the bracketed lists below exist
+;
+; Each bracketed list names grammar literals one by one because they carry no
+; tier alias. That is a grammar shortcoming, not a query one: the fix for any
+; entry is an alias in grammar.js — see `font` -> arg and the `pause` end
+; conditions -> mod — after which the literal disappears from node-types.json
+; and its line here is deleted. A bare literal also never reaches
+; keywords.json, so downstream tooling cannot see it at all. Prefer aliasing
+; over adding to these lists.
+;
+; built-in named values (palette presets, special colour names).
+; `bgnd` and `background` are gnuplot synonyms for the same colour; both are
+; separate literals in the grammar, so both need naming here.
 [
   "viridis"
   "black"
@@ -30,13 +41,18 @@
   "="
   ","
   ":"
+  ; datablock heredoc (`$data << EOD`) and the left-shift operator share one
+  ; token, so this capture covers both roles
+  "<<"
 ] @operator
+
+; open range end — `set xrange [*:*]`, `array A[*]`: a wildcard, not a product
+"*" @character.special
 
 (keyword_op) @keyword.operator
 
 (ternary_op) @keyword.conditional.ternary
 
-; TODO: collapse
 [
   "for"
   "in"
@@ -48,14 +64,15 @@
 ; Commands
 "cmd" @keyword
 
-; TODO: decide and collapse
+; pseudo plot-elements: they fill an element slot but name no data source
 [
   "newhistogram"
   "newspiderplot"
   "keyentry"
 ] @keyword
 
-; TODO: decide inverse, sample
+; connector words. `kw_fn` is the alias tier (at/via/from/to/by); `inverse`
+; (set link) and `sample` (plot sample) read the same way in their clause.
 [
   "inverse"
   "sample"
@@ -64,26 +81,30 @@
 
 "kw_cond" @keyword.conditional
 
-; TODO: decide and collapse
 [
   "front"
   "back"
   "depthorder"
   "clip"
-  "font"
+  "zclip"
   "filled"
   "nofilled"
-  "parallel"
   ; coordinate systems (first/second/graph/screen/character/polar) — alias "coord"
   "coord"
 ] @keyword.directive
 
-; on/off toggle flags ({no}X) — alias "flag" (@keyword.modifier)
+; on/off toggle flags ({no}X) — alias "flag"
 "flag" @keyword.directive
 
-; enumerated VALUES / modes (alias "mod") — @constant
-; TODO: decide, constant?
+; enumerated VALUES / modes (alias "mod")
 "mod" @constant
+
+; binary rotate= angle-unit suffixes (rotate=90deg / rotate=0.5 pi);
+; the attached form 0.5pi folds into the number token instead
+[
+  "degrees"
+  "pi"
+] @constant
 
 ; plot/splot ELEMENT modifiers (alias "attr") — @property
 ; (title/notitle/with/using/index/every/axes/smooth in a plot command;
@@ -91,7 +112,6 @@
 "attr" @property
 
 ; -----------------------------------------------------------------------
-; TODO: decide and collapse
 [
   ; Terminal output path
   "name"
@@ -108,28 +128,19 @@
   "skip"
   "expand"
   "title"
-  ; set/show argument keywords (all key("...", n, "arg") aliases)
+  ; set/show/unset option heads (alias "opt") and option-body suboption
+  ; keywords (alias "arg") — distinct clause families, same visual group
+  "opt"
   "arg"
 ] @variable.member
 
-
 ; -----------------------------------------------------------------------
 ; Option keywords
-; TODO: decide and collapse
 [
   ; coordinate systems / axes
-  "unit"
   "axes_opts"
   ; time units (set xdata time / timefmt)
-  "seconds"
-  "minutes"
-  "hours"
-  "days"
-  "weeks"
-  "months"
-  "years"
   ; smooth subtypes still emitted as own token (value-modes csplines/bezier/… → "mod")
-  "kdensity"
   "closed"
   "between"
   "above"
@@ -169,15 +180,17 @@
   "origin"
   "dx"
   "dy"
-  "width"
   "level"
   "matrix"
+  "columnheaders"
+  "rowheaders"
   "nonuniform"
   "sparse"
   "volatile"
   "noautoscale"
   "zsort"
   "mask"
+  "sharpen"
   "transpose"
   ; endian options (binary)
   "endian"
@@ -190,14 +203,11 @@
   ; fit modifiers
   "unitweights"
   "errors"
-  ; pause endconditions
+  ; command-argument keywords (exit forms, pause mouse)
+  ; the `pause` end conditions themselves are `mod` tier
+  "message"
+  "status"
   "mouse"
-  "keypress"
-  "button1"
-  "button2"
-  "button3"
-  "close"
-  "any"
   ; history command options
   "append"
   "quiet"
@@ -216,10 +226,8 @@
   "angle"
   "length"
   "head"
-  "inout"
   ; offset / scale
   "offset"
-  "nooffset"
   "scale"
   ; orientation
   ; angle units
@@ -227,8 +235,6 @@
   "range"
   "missing"
   "interpolate"
-  "autofreq"
-  "autojustify"
   ; rotation
   "rotate"
   ; border / extend / range modifiers
@@ -241,24 +247,20 @@
   ; key/label placement
   ; fill pattern
   "pattern"
-  ; 3d / surface
-  "s"
   ; data / fit extras
   "variables"
-  "logfile"
-  "nologfile"
   "datablocks"
   "commentschars"
   "functions"
+  ; save changes
+  "changes"
   ; misc
   ; coordinate planes / walls
-  "version"
   ; colorspec
   "rgbcolor"
   ; tics
   ; set size
   ; set fit
-  "maxiter"
   "default"
   ; label / style
   ; set view
@@ -271,24 +273,19 @@
   "primary"
   "specular"
   "spec2"
+  "rot_x"
+  "rot_z"
+  "Phong"
   ; dgrid3d subtype (gauss/… value-modes → "mod")
-  "splines"
   ; contour / cntrparam
   ; tics axes / modifiers
-  "add"
   ; text / font / encoding
-  "fontscale"
-  "utf8"
   ; fill / size style
   "empty"
   ; layout / spacing / multiplot
   "layout"
   "spacing"
   "frac"
-  ; color names in style contexts
-  "cb"
-  ; filledcurves axis coordinate (x1, x2, y1, y2 etc.)
-  "coordinate"
   ; watch-label / surface options
   "point"
   ; tics keyword (grid / paxis — covers xtics, ytics, ztics contexts)
@@ -300,15 +297,11 @@
   "label"
   ; polar coordinate system and grid option
   ; polar grid axis ranges
-  "theta"
-  "r"
   ; ellipses style
   "units"
   ; stats output prefix
   "prefix"
   ; palette formula option
-  ; pm3d z-clip
-  "z"
   ; grid mode
   ; datafile option
   ; textbox / multiplot margins (anonymous "margins" string)
@@ -316,12 +309,10 @@
   ; datafile lc/fc palette shorthand
   "palette"
   ; set fit quiet / results / verbose / brief
-  "fit_out"
 ] @variable.member
 
 ; -----------------------------------------------------------------------
 ; Presentation / style attributes
-; TODO: decide and collapse
 [
   "size"
   "monochrome"
@@ -337,30 +328,16 @@
   "units_opt"
   ; fill / line style modes
   "solid"
-  "dashed"
   ; page orientation
-  "landscape"
-  "portrait"
   ; terminal options
   "animate"
   "input"
-  "colortext"
-  "blacktext"
   ; point type names (ps/tikz terminals)
-  "texpoints"
-  "normalpoints"
-  "mpoints"
-  "smallpoints"
-  "tinypoints"
-  "pspoints"
-  "nopspoints"
   ; key alignment (capitalised)
   ; layer / style misc
-
   "st_opt"
   "plt_st"
 ] @attribute
-
 
 ; binary filetype= value (png/jpg/gif/bin parsed as identifier in field)
 (binary_options
@@ -379,52 +356,104 @@
 
 ; -----------------------------------------------------------------------
 ; Functions
+;
+; ORDERING: this file assumes Neovim's "last match wins" resolution.
+; Under the tree-sitter CLI, Helix, and Zed the FIRST match wins, so these
+; blocks must be reordered there or @function.builtin never fires.
+;
+; Definition head vs call site: `def_func` wraps a definition, but its RHS
+; body call is also a direct `function` child, so the definition rule must
+; anchor to the first child.
 (function
-  name: (identifier) @function)
+  name: (identifier) @function.call)
+
+(def_func
+  .
+  (function
+    name: (identifier) @function))
 
 ((function
   name: (identifier) @function.builtin)
   (#any-of? @function.builtin
+    ; real / complex math
     "abs" "acos" "acosh" "airy" "arg" "asin" "asinh" "atan" "atan2" "atanh" "besj0" "besj1" "besjn"
-    "besy0" "besy1" "besyn" "besi0" "besi1" "besin" "cbrt" "ceil" "conj" "cos" "cosh" "EllipticK"
-    "EllipticE" "EllipticPi" "erf" "erfc" "exp" "expint" "floor" "gamma" "ibeta" "inverf" "igamma"
-    "imag" "int" "invnorm" "invibeta" "invigamma" "LambertW" "lambertw" "lgamma" "lnGamma" "log"
-    "log10" "norm" "rand" "real" "round" "sgn" "sin" "sinh" "sqrt" "SynchrotronF" "tan" "tanh"
-    "uigamma" "voigt" "zeta" "cerf" "cdawson" "faddeva" "erfi" "FresnelC" "FresnelS" "VP" "VP_fwhm"
-    "Ai" "Bi" "BesselH1" "BesselH2" "BesselJ" "BesselY" "BesselI" "BesselK" "gprintf" "sprintf"
-    "strlen" "strstrt" "substr" "strptime" "srtftime" "system" "trim" "word" "words" "time"
-    "timecolumn" "tm_hour" "tm_mday" "tm_min" "tm_mon" "tm_sec" "tm_wday" "tm_week" "tm_yday"
-    "tm_year" "weekday_iso" "weekday_cdc" "column" "columnhead" "exists" "hsv2rgb" "index" "palette"
-    "rgbcolor" "stringcolumn" "valid" "value" "voxel"))
+    "besy0" "besy1" "besyn" "besi0" "besi1" "besin" "cbrt" "ceil" "conj" "cos" "cosh" "exp" "floor"
+    "imag" "int" "log" "log10" "norm" "rand" "real" "round" "sgn" "sin" "sinh" "sqrt" "tan" "tanh"
+    ; special functions
+    "EllipticK" "EllipticE" "EllipticPi" "erf" "erfc" "expint" "gamma" "ibeta" "igamma" "inverf"
+    "invibeta" "invigamma" "invnorm" "LambertW" "lambertw" "lgamma" "lnGamma" "Sign" "SynchrotronF"
+    "uigamma" "voigt" "zeta"
+    ; libcerf
+    "cerf" "cdawson" "faddeeva" "erfi" "FresnelC" "FresnelS" "VP" "VP_fwhm"
+    ; libamos — complex Airy / Bessel
+    "Ai" "Bi" "BesselH1" "BesselH2" "BesselJ" "BesselY" "BesselI" "BesselK"
+    ; strings
+    "gprintf" "sprintf" "strlen" "strstrt" "substr" "split" "join" "trim" "word" "words" "system"
+    ; arrays
+    "index"
+    ; time
+    "time" "timecolumn" "strftime" "strptime" "tm_hour" "tm_mday" "tm_min" "tm_mon" "tm_sec"
+    "tm_wday" "tm_week" "tm_yday" "tm_year" "weekdate_iso" "weekdate_cdc"
+    ; using-specifier / plotting
+    "column" "columnhead" "stringcolumn" "strcol" "exists" "valid" "value" "hsv2rgb" "palette"
+    "rgbcolor" "voxel"))
+
+; bare `title columnheader` (the called form `columnheader(N)` is a (function)
+; and matches the builtin list above)
+(columnheader) @function.builtin
 
 ; -----------------------------------------------------------------------
-; Built-in variables (stats output, GPVAL_*, etc.)
-((identifier) @variable.builtin
-  (#match? @variable.builtin
-    "^\\w+_(records|headers|outofrange|invalid|blank|blocks|columns|column_header|index_(min|max)(_x|_y)?|(min|max)(_x|_y)?|mean(_err)?(_x|_y)?|stddev(_err)?(_x|_y)?)$"))
+; Built-in constants
+((identifier) @constant.builtin
+  (#any-of? @constant.builtin "pi" "NaN" "Inf" "I"))
 
+; -----------------------------------------------------------------------
+; Built-in variables (GPVAL_*, ARG*, vfill loop vars)
+;
+; REGEX DIALECT / GROUP BUDGET — read before editing the `#match?` below.
+;
+; Neovim evaluates `#match?` with `vim.regex()`, prepending `\v` (very magic)
+; whenever the pattern does not already start with `\v`/`\m`/`\M`/`\V`. Every
+; bare `(` is then a CAPTURING group, and Vim's NFA engine allows at most 9 of
+; them. A tenth aborts the whole query with `E872: (NFA regexp) Too many '('`,
+; and highlighting stops dead at that predicate, leaving the rest of the buffer
+; unhighlighted. A wider alternation goes in a pattern of its own rather than a
+; tenth group; the query engine ORs separate patterns, so the accepted set is
+; unchanged.
+;
+; Write `(`, `|`, `)`, `?` bare — under the prepended `\v` an escaped `\(` is a
+; LITERAL character, so the predicate compiles cleanly and then matches nothing.
+;
+; This bare dialect is read identically by Vim's very-magic mode and by Rust
+; regex (tree-sitter CLI, Helix, Zed), so it stays portable across engines.
+;
+; stats output variables are deliberately not matched here. Their prefix is
+; user-selectable (`stats … name "FOO"`, and `prefix` is a synonym of `name`),
+; so the wildcard prefix this once needed painted every user variable named
+; x_min or t_mean as a built-in. The language server resolves the prefix from
+; the document instead.
+; GPVAL_* / MOUSE_* / FIT_* / ARG*
 ((identifier) @variable.builtin
-  (#match? @variable.builtin
-    "^\\w+_(sdd(_x|_y)?|(lo|up)_quartile(_x|_y)?|median(_x|_y)?|sum(sq)?(_x|_y)?|skewness(_err)?(_x|_y)?)$"))
+  (#match? @variable.builtin "^((GPVAL|MOUSE|FIT)_|ARG)\\w+$"))
 
+; fixed-name built-ins — plain string comparison, never reaches a regex engine
 ((identifier) @variable.builtin
-  (#match? @variable.builtin
-    "^\\w+_(kurtosis(_err)?(_x|_y)?|adev(_x|_y)?|correlation|slope(_err)?|intercept(_err)?|sumxy|pos_(min|max)_y|size(_x|_y))$"))
-
-((identifier) @variable.builtin
-  (#match? @variable.builtin
-    "^((GPVAL|MOUSE|FIT)_\\w+|GNUTERM|NaN|Inf|VoxelDistance|GridDistance|pi|ARG\\w+)$"))
+  (#any-of? @variable.builtin "GNUTERM" "VoxelDistance" "GridDistance"))
 
 ; -----------------------------------------------------------------------
 ; Array definitions
 (def_array
   "array" @keyword.function)
 
+; the field matters: a fieldless (identifier) here also catches the index
+; expression, so `cnt[i] = 0` painted `i` as a function
 (array
-  (identifier) @function)
+  name: (identifier) @function)
 
 ; -----------------------------------------------------------------------
 ; Literals
+"NaN" @constant.builtin
+
 (number) @number
 
 (string_literal) @string
@@ -432,3 +461,7 @@
 (escape_sequence) @string.escape
 
 (format_specifier) @string.special
+
+; watchpoint target (`watch y=50`): the axis/expression name being watched
+(plot_element
+  target: (identifier) @variable.member)
