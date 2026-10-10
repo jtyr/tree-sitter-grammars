@@ -375,6 +375,7 @@ module.exports = grammar({
       alias("unknown", $.unknownType),
       alias("nothing", $.nothingType),
       alias("module", $.moduleType),
+      alias("this", $.thisType),
       $.stringLiteralType,
       $.declaredType,
       $.parenthesizedType,
@@ -843,9 +844,22 @@ module.exports = grammar({
 
     importExpr: $ => seq(field("variant", choice("import", "import*")), seq('(', $.stringConstant, ')')),
 
-    unqualifiedAccessExpr: $ => seq($.identifier, optional($.argumentList)),
+    methodTypeArguments: $ => seq("::", $.typeArgumentList),
 
-    superAccessExpr: $ => prec.left(PREC.ACCESS, seq("super", ".", $.identifier, optional($.argumentList))),
+    unqualifiedAccessExpr: $ => seq(
+      $.identifier,
+      optional(seq(optional($.methodTypeArguments), $.argumentList))
+    ),
+
+    superAccessExpr: $ => prec.left(
+      PREC.ACCESS,
+      seq(
+        "super",
+        ".",
+        $.identifier,
+        optional(seq(optional($.methodTypeArguments), $.argumentList))
+      )
+    ),
 
     superSubscriptExpr: $ => prec.left(PREC.ACCESS, seq("super", alias($._open_subscript_bracket, "["), $._expr, "]")),
 
@@ -856,8 +870,8 @@ module.exports = grammar({
         choice(".", "?."),
         seq(
           $.identifier,
-          optional($.argumentList)
-        ),
+          optional(seq(optional($.methodTypeArguments), $.argumentList))
+        )
       )
     ),
 

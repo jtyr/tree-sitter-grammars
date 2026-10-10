@@ -51,12 +51,13 @@ module.exports = grammar({
   name: "fsharp",
 
   extras: ($) => [
-    /[ \s\f\uFEFF\u2060\u200B]|\\\r?n/,
+    /[ \s\f\uFEFF\u2060\u200B]/,
     $.block_comment,
     $.line_comment,
     $.xml_doc,
     $.preproc_line,
     $.compiler_directive_decl,
+    $.preproc_inactive,
     ";",
   ],
 
@@ -98,6 +99,10 @@ module.exports = grammar({
     $._type_decl_newline, // lookahead token: fires at newline/EOF when the next non-blank line is not more indented, used to match bare type declarations
     $._in, // external 'in' keyword token for let...in expressions; only produced when valid, so 'in' as identifier in query/CE contexts is unaffected
     $._do_keyword, // external 'do' terminating a while/for header; distinct from do_expression's 'do' so `while a && b do` reduces the condition instead of shifting 'do' as an application argument
+    $._try_indent, // like _indent, but opens a try-body scope that can be force-closed when its 'with'/'finally' sits at the same column as the body
+    $.preproc_inactive, // extra: an inactive `#else`..`#endif` region (or dangling `#endif`) of a directive whose `#if` line was skipped as trivia because the grammar has no preproc rule at that position
+    $._elem_separator, // fires at a column-0 line while only the base indent level is open: separates top-level module elements so an application expression cannot absorb the next element
+    $._brace_indent, // opens a '{...}' record/CE field block: closed by '}', under-indented lines still emit NEWLINE so items keep separating
 
     $._error_sentinel, // unused token to detect parser errors in external parser.
   ],
@@ -105,14 +110,12 @@ module.exports = grammar({
   conflicts: ($) => [
     [$.long_identifier, $._identifier_or_op],
     [$.simple_type, $.type_argument],
-    [$._module_elem, $.preproc_if_in_expression],
+    // `new ^T ...` is ambiguous between an SRTP type arg (^T or ^U ...) and a
+    // plain generic type var; only reachable via generic_new_expression,
+    // resolved dynamically.
+    [$._srtp_type_argument, $._static_type_identifier],
     [$._module_expression, $._expression],
     [$.declaration_expression, $._comp_or_range_expression],
-    [$.preproc_if_in_expression, $.preproc_if_in_module_body],
-    [$.preproc_else_in_expression, $.preproc_else_in_module_body],
-    [$._module_elem, $.preproc_else_in_expression],
-    [$._module_body_elem, $.preproc_if_in_expression],
-    [$._module_body_elem, $.preproc_else_in_expression],
     [$.rules],
     // Singleton: union_type_cases conflicts with itself (shift the optional
     // _newline before the next '|' case vs. reduce), like [$.rules] above.
@@ -120,9 +123,34 @@ module.exports = grammar({
     [$.prefixed_expression, $._low_prec_app, $.infix_expression],
     [$._type, $._argument_type],
     [$._type, $._curried_return_type],
+    // A leading _elem_separator (fired after a file-opening extra such as a
+    // doc comment) could belong to the plain module-elements repeat or open
+    // named_module/namespace; both must stay alive until the header keyword
+    // and the presence/absence of '=' decide.
+    [$.file, $.named_module],
+    // Singleton: a separator after a namespace body could continue that
+    // namespace's element repeat or lead the next namespace in the file.
+    [$.namespace],
   ],
 
   word: ($) => $.identifier,
+
+  // Keyword extraction alone is not enough: when a keyword is not valid in the
+  // current parse state, tree-sitter falls back to the word token, so `let type
+  // = 2` binds a value named "type" and `open System` inside a function body
+  // parses as the application `open System`. Listing the keywords here stops
+  // that fallback, so those positions become ERROR as FSC reports them.
+  // Two keywords are deliberately absent:
+  //
+  //  * `member`, because the grammar relies on it lexing as an identifier to
+  //    recover from over-indented member declarations (`inherit Base()` followed
+  //    by a more-indented `static member ...`), which FSC accepts.
+  //  * `val`, because the `basic long namespace` test in source_file.txt asserts
+  //    a tree for `namespace test.val`, which FSC rejects ("Unexpected start of
+  //    structured construct"). Reserving it would change that expected tree.
+  reserved: {
+    global: (_) => ["as", "namespace", "open", "type"],
+  },
 
   inline: ($) => [
     $._expression_or_range,
@@ -145,27 +173,54 @@ module.exports = grammar({
     //
     // Top-level rules (BEGIN)
     //
+    // Top-level elements are separated by an optional _elem_separator: the
+    // scanner emits one at a column-0 line while only the base indent level
+    // is open, which stops an application expression from absorbing the
+    // next element (e.g. `f 1` followed by `let g x = ...` parsing as a
+    // let-in argument of `f`). A dedicated token — reusing _newline here
+    // would also fire at before-element newline positions inside preproc
+    // branches and derail those parses. Both arms of the choice must stay
+    // bare: wrapping either in a seq (seq(elem, optional(sep)) or
+    // seq(sep, elem) were both tried) changes static conflict resolution
+    // and kills the GLR fork that continues a column-0 union case after a
+    // trailing line comment. Because the separator therefore sits in a
+    // plain repeat — where the parser would shift a zero-width token
+    // forever, allocating without bound — the scanner-side token consumes
+    // the newline it fires on, so each emission makes progress and cannot
+    // repeat at the same position.
     file: ($) =>
-      choice(repeat1($.namespace), prec(-1, repeat($._module_elem)), prec(1, $.named_module)),
+      choice(
+        repeat1($.namespace),
+        prec(-1, repeat(choice($._module_elem, $._elem_separator))),
+        prec(1, $.named_module),
+      ),
 
+    // The optional leading _elem_separator matters when the file opens with
+    // an extra (e.g. a doc comment) before the header keyword: the scanner
+    // fires the separator after the extra's newline, and if only the plain
+    // module-elements arm of `file` could shift it, doing so would commit
+    // the parse away from namespace/named_module before the keyword is even
+    // seen (`module M` then mis-parses as a module_defn missing its `=`).
     namespace: ($) =>
       seq(
+        optional($._elem_separator),
         "namespace",
         choice(
           "global",
           field("name", seq(optional("rec"), $.long_identifier)),
         ),
-        repeat($._module_elem),
+        repeat(choice($._module_elem, $._elem_separator)),
       ),
 
     named_module: ($) =>
       seq(
+        optional($._elem_separator),
         optional($.attributes),
         "module",
         optional($.access_modifier),
         optional("rec"),
         field("name", $.long_identifier),
-        repeat($._module_elem),
+        repeat(choice($._module_elem, $._elem_separator)),
       ),
 
     _preproc_toplevel_module: ($) =>
@@ -299,6 +354,8 @@ module.exports = grammar({
         "[<",
         $.attribute,
         prec(PREC.SEQ_EXPR + 1, repeat(seq($._newline, $.attribute))),
+        // A trailing separator is allowed: `[<Fact; >]`.
+        optional($._newline),
         ">]",
       ),
     attribute: ($) =>
@@ -345,7 +402,8 @@ module.exports = grammar({
     _function_or_value_defn_body: ($) =>
       seq(
         choice($.function_declaration_left, $.value_declaration_left),
-        optional(seq(":", $._type)),
+        // The return type may carry attributes: `let f(x) : [<A>] int = ...`.
+        optional(seq(":", optional($.attributes), $._type)),
         optional($.type_argument_constraints),
         "=",
         field("body", $._expression_block_for_let),
@@ -366,13 +424,27 @@ module.exports = grammar({
     value_declaration_left: ($) =>
       prec.left(
         2,
-        seq(
-          optional("mutable"),
-          optional($.access_modifier),
-          $._pattern,
-          optional($.type_arguments),
+        choice(
+          seq(
+            optional("mutable"),
+            optional($.access_modifier),
+            $._pattern,
+            optional($.type_arguments),
+          ),
+          // `let inline add3 = add 3` — an inline value has no parameters, so it
+          // is not a function_declaration_left. Only a name (no pattern, no
+          // arguments) may follow the keyword, so `let inline f x` stays a
+          // function and `let inline (a, b) = …` is not accepted.
+          seq("inline", optional($.access_modifier), alias($._inline_value_name, $.identifier_pattern), optional($.type_arguments)),
         ),
       ),
+
+    // The name of an inline value. The same shape identifier_pattern wraps
+    // (an identifier, an operator name or a dotted path): the alias keeps the
+    // tree identical to a plain `let x = …`, so queries need no special case.
+    // A dotted name is not valid F# here, but identifier_pattern accepts it
+    // everywhere else too and the type checker reports it.
+    _inline_value_name: ($) => $.long_identifier_or_op,
 
     access_modifier: (_) =>
       prec(100, token(prec(1000, choice("private", "internal", "public")))),
@@ -380,7 +452,9 @@ module.exports = grammar({
     // Top-level rules (END)
     //
 
-    class_as_reference: ($) => seq("as", $.identifier),
+    // Outranks as_pattern (prec 0), which would otherwise absorb the `as this`
+    // of `type T(args) as this` / `new (args) as this` into the argument pattern.
+    class_as_reference: ($) => prec(1, seq("as", $.identifier)),
 
     primary_constr_args: ($) =>
       seq(
@@ -567,6 +641,7 @@ module.exports = grammar({
         $.array_expression,
         $.ce_expression,
         $.prefixed_expression,
+        $.generic_new_expression,
         $.brace_expression,
         $.anon_record_expression,
         $.typecast_expression,
@@ -596,8 +671,12 @@ module.exports = grammar({
       prec(
         PREC.PAREN_EXPR,
         choice(
-          seq("<@", $._expression, $._quoted_close),
-          seq("<@@", $._expression, $._untyped_quoted_close),
+          // A paren-kind scope, like `( … )`: the body may span lines that are
+          // not aligned with any open layout level, and `@>` closes it.
+          // The closers are scanner tokens; aliasing them to their spelling
+          // makes them addressable from queries ("@>" @punctuation.special).
+          seq("<@", $._paren_expression_block, alias($._quoted_close, "@>")),
+          seq("<@@", $._paren_expression_block, alias($._untyped_quoted_close, "@@>")),
         ),
       ),
 
@@ -605,7 +684,16 @@ module.exports = grammar({
       prec.right(
         PREC.PAREN_EXPR,
         seq(
-          alias($._srtp_type_argument, $.type_argument),
+          // A support constraint over several typars is written parenthesized:
+          // `((^a or ^b) : (static member op_Implicit: ^a -> ^b) x)`. The
+          // single-typar form `(^a : ...)` takes no inner parens. Either way
+          // the outer parens belong to the surrounding paren_expression; the
+          // scanner keeps the group's '(' from opening one of its own (see
+          // is_srtp_typar_group_ahead).
+          choice(
+            alias($._srtp_type_argument, $.type_argument),
+            seq("(", alias($._srtp_type_argument, $.type_argument), ")"),
+          ),
           ":",
           "(",
           $.trait_member_constraint,
@@ -646,14 +734,23 @@ module.exports = grammar({
         PREC.CE_EXPR + 1,
         seq(
           "{",
-          scoped(
-            choice(
-              $.field_initializers,
-              $.object_expression,
-              $.with_field_expression,
+          // Optional so an additional constructor can hand back an empty
+          // object: `new (x) = {}` / `{ }`, and so the inherit-only form
+          // `new () = { inherit Base() }` needs no field initializers.
+          optional(
+            scoped(
+              choice(
+                $.field_initializers,
+                $.object_expression,
+                $.with_field_expression,
+                seq(
+                  $.class_inherits_decl,
+                  optional(seq(optional($._newline), $.field_initializers)),
+                ),
+              ),
+              $._brace_indent,
+              $._dedent,
             ),
-            $._indent,
-            $._dedent,
           ),
           "}",
         ),
@@ -664,11 +761,11 @@ module.exports = grammar({
         PREC.PAREN_EXPR,
         seq(
           "{|",
-          scoped(
+          optional(scoped(
             choice($.field_initializers, $.with_field_expression),
             $._indent,
             $._dedent,
-          ),
+          )),
           "|}",
         ),
       ),
@@ -682,8 +779,10 @@ module.exports = grammar({
         seq(
           "new",
           $._expression,
-          optional(seq("as", $.identifier)),
-          $._object_expression_inner,
+          // No `as` binding: `{ new Base() as b with ... }` is rejected by FSC
+          // ("'inherit' declarations cannot have 'as' bindings"); `base` is a
+          // keyword instead.
+          optional($._object_expression_inner),   // `{ new A<int>() }` — no overrides
         ),
       ),
 
@@ -691,7 +790,11 @@ module.exports = grammar({
       seq(
         $._expression,
         "with",
-        scoped($.field_initializers, $._indent, $._dedent),
+        // Brace-kind scope: the fields live inside a literal `{ ... }`, so an
+        // under-indented continuation field must separate (NEWLINE), not close
+        // the scope — `{ q with A = ...;` with the next field left of the
+        // first one is valid F# (the closing `}` bounds the scope).
+        scoped($.field_initializers, $._brace_indent, $._dedent),
       ),
 
     prefixed_expression: ($) =>
@@ -710,6 +813,22 @@ module.exports = grammar({
           $.prefix_op,
         ),
         prec.right(PREC.PREFIX_EXPR, $._expression),
+      ),
+
+    // `new 'T()` / `new 'T(args)`: constructing a value of a generic type
+    // parameter. A type variable ('T / ^T) is not a general expression atom
+    // (that would clash with char literals), so this is gated on `new`.
+    generic_new_expression: ($) =>
+      prec.right(
+        PREC.NEW_OBJ,
+        seq(
+          "new",
+          $.type_argument,
+          choice(
+            $.unit,
+            seq(token.immediate(prec(10000, "(")), $._paren_expression_block, ")"),
+          ),
+        ),
       ),
 
     typecast_expression: ($) =>
@@ -779,7 +898,7 @@ module.exports = grammar({
         PREC.MATCH_EXPR,
         seq(
           "try",
-          $._expression_block,
+          seq($._try_indent, $._expression, $._dedent),
           optional($._newline),
           choice(seq("with", $.rules), seq("finally", $._expression_block)),
         ),
@@ -849,7 +968,7 @@ module.exports = grammar({
     declaration_expression: ($) =>
       seq(
         choice(
-          seq(choice("use", "use!"), $.identifier, "=", $._expression_block_for_let),
+          seq(choice("use", "use!"), optional("mutable"), choice($.identifier, $.paren_pattern), optional(seq(":", $._type)), "=", $._expression_block_for_let),
           seq(
             $.function_or_value_defn,
             repeat($.and_bang),
@@ -986,7 +1105,7 @@ module.exports = grammar({
         seq(
           prec(-1, $._expression),
           "{",
-          scoped($._comp_expression_block, $._indent, $._dedent),
+          scoped($._comp_expression_block, $._brace_indent, $._dedent),
           "}",
         ),
       ),
@@ -1030,7 +1149,7 @@ module.exports = grammar({
     comp_declaration_expression: ($) =>
       seq(
         choice(
-          seq(choice("use", "use!"), $.identifier, "=", $._expression_block_for_let),
+          seq(choice("use", "use!"), choice($.identifier, $.paren_pattern), optional(seq(":", $._type)), "=", $._expression_block_for_let),
           seq(
             $.function_or_value_defn,
             repeat($.and_bang),
@@ -1241,6 +1360,7 @@ module.exports = grammar({
           $.compound_type,
           $.postfix_type,
           $.list_type,
+          $.byref_type,
           $.static_type,
           $.type_argument,
           $.constrained_type,
@@ -1304,7 +1424,24 @@ module.exports = grammar({
         "1",
       ),
 
-    measure_power: ($) => prec.right(6, seq($.measure_atom, "^", $.int)),
+    measure_power: ($) =>
+      prec.right(
+        7,
+        seq(
+          $.measure_atom,
+          choice(
+            seq("^", $._measure_exponent),
+            // `s^-1`: the lexer takes `^-` as a single symbolic-operator
+            // token, so a negative exponent cannot be spelled `^` `-` int.
+            seq("^-", $.int),
+          ),
+        ),
+      ),
+
+    // The exponent may also be a parenthesized rational (`kg^(1/2)`,
+    // `s^(-1/2)`) — F# spec 9.4 "Measure expressions".
+    _measure_exponent: ($) =>
+      choice($.int, seq("(", optional("-"), $.int, "/", $.int, ")")),
 
     _measure_operand: ($) =>
       choice(
@@ -1313,9 +1450,48 @@ module.exports = grammar({
         $.compound_type,
       ),
 
-    measure_quotient: ($) => prec.left(5, seq($._measure_operand, "/", $._measure_operand)),
+    // Product by juxtaposition: `kg m`, `m s^-1`, `'u 'v`. F# also spells the
+    // product `kg * m`, which arrives here as a compound_type operand. Binds
+    // tighter than '/' so `kg m / s^2` is `(kg m) / s^2`.
+    measure_product: ($) =>
+      prec.left(6, seq($._measure_operand, repeat1($._measure_operand))),
 
-    measure: ($) => choice($.measure_quotient, $.measure_power, seq("(", $.measure, ")")),
+    // Left-associative, so `m / s / s` is `(m / s) / s` rather than an error.
+    // A chain of divisions is one node with the operands in order, matching how
+    // FSC parses it: `m / s / s` is a flat `SynType.Tuple [Type; Slash; Type;
+    // Slash; Type]`, folded left only later during checking. A single '/' gives
+    // the same two children as the earlier binary rule did.
+    measure_quotient: ($) =>
+      prec.left(
+        5,
+        seq(
+          choice(
+            $._measure_operand,
+            $.measure_product,
+            // `kg m` is indistinguishable from a postfix type until a
+            // measure-only token appears, and the postfix reading wins the
+            // (statically resolved) reduce/reduce — so accept it here, which
+            // is what lets `kg m / s^2` parse. Only on the left of '/': as a
+            // general operand it would also make a plain `type T = A.B`
+            // abbreviation ambiguous with a measure.
+            $.postfix_type,
+          ),
+          // `m / s s`: the same postfix-type reading of `s s` applies on the right.
+          repeat1(seq("/", choice($._measure_operand, $.measure_product, $.postfix_type))),
+        ),
+      ),
+
+    measure: ($) =>
+      choice(
+        $.measure_quotient,
+        $.measure_power,
+        $.measure_product,
+        seq("(", $.measure, ")"),
+        // The dimensionless measure `1`, e.g. `float<1>`. Reuses the same "1"
+        // literal as measure_atom (no new token) so quotient/power measures like
+        // `1/s` are unaffected; only a bare `1` reduces to this standalone form.
+        alias("1", $.measure_atom),
+      ),
 
     simple_type: ($) => choice($.long_identifier, $._static_type_identifier),
     generic_type: ($) =>
@@ -1331,7 +1507,11 @@ module.exports = grammar({
     postfix_type: ($) => prec.left(4, seq($._type, $.long_identifier)),
     // '[]', '[,]', '[,,]', ... — multidimensional array suffixes share the
     // token so 'float[,]' lexes as one postfix rather than index syntax.
-    list_type: ($) => seq($._type, alias(token(/\[,*\]/), "[]")),
+    // Interior whitespace is permitted ('int[ ]', 'float[ , ]').
+    list_type: ($) => seq($._type, alias(token(/\[[ \t]*(,[ \t]*)*\]/), "[]")),
+    // Byref type: 'int&', 'float32&'. The '&' must immediately follow the type
+    // (token.immediate) so it is not confused with the '&' infix/pattern op.
+    byref_type: ($) => prec.left(4, seq($._type, token.immediate("&"))),
     static_type: ($) => prec(10, seq($._type, $.type_arguments)),
     constrained_type: ($) => prec.right(seq($.type_argument, ":>", $._type)),
     flexible_type: ($) => prec.right(seq("#", $._type)),
@@ -1348,7 +1528,7 @@ module.exports = grammar({
       choice($.static_parameter_value, $.named_static_parameter),
 
     named_static_parameter: ($) =>
-      prec(3, seq($.identifier, "=", $.static_parameter_value)),
+      prec(3, seq($.identifier, "=", choice($.static_parameter_value, $.long_identifier))),
 
     type_attribute: ($) =>
       choice(
@@ -1384,6 +1564,20 @@ module.exports = grammar({
         ),
       ),
 
+    // A tuple/compound type abbreviation whose first operand is a generic type,
+    // e.g. `type T = Foo<'a> * Bar`. The generic head opens an indent scope at
+    // '<' (see _multiline_generic_type_head); the matching _dedent is deferred
+    // until after the whole compound so the single-line form composes correctly.
+    _multiline_generic_compound_type: ($) =>
+      prec.right(
+        6,
+        seq(
+          alias($._multiline_generic_type_head, $.generic_type),
+          repeat1(prec.right(seq("*", $._type))),
+          $._dedent,
+        ),
+      ),
+
     atomic_type: ($) =>
       prec.right(
         choice(
@@ -1402,12 +1596,16 @@ module.exports = grammar({
           seq($.type_argument, ":>", $._type),
           seq($.type_argument, ":", "null"),
           seq(
-            $.type_argument,
+            // `when (^t or ^u or ^v) : (static member M : string)` — a
+            // support constraint over several typars parenthesizes them.
+            choice($.type_argument, seq("(", $.type_argument, ")")),
             ":",
             "(",
             choice(
               $.trait_member_constraint,
-              seq("new", ":", "unit", arrow(), $._type),
+              // `new : string -> 'a` — the constructor may take arguments (FS0698
+              // is a type-checker error, not a parse error).
+              seq("new", ":", choice("unit", $._type), arrow(), $._type),
             ),
             ")",
           ),
@@ -1428,6 +1626,12 @@ module.exports = grammar({
             ">",
           ),
           seq("default", $.type_argument, ":", $._type),
+          // Self-constrained typar: `when IStaticProperty<'T>` / `when
+          // AverageOps<'T>` names an interface (or a constraint abbreviation)
+          // the typar must satisfy. Only the generic form is accepted, so the
+          // leading token can never be confused with the typar-first
+          // alternatives above.
+          $.generic_type,
         ),
       ),
 
@@ -1521,8 +1725,19 @@ module.exports = grammar({
         seq(
           optional($.attributes),
           "type",
+          // Attributes may also sit between `type` and the name:
+          // `type [<Struct>] R = ...`
+          optional($.attributes),
           $._type_defn_body,
-          repeat(seq("and", optional($.attributes), $._type_defn_body)),
+          repeat(
+            seq(
+              "and",
+              choice(
+                seq(optional($.attributes), $._type_defn_body),
+                seq($._indent, optional($.attributes), $._type_defn_body, $._dedent),
+              ),
+            ),
+          ),
         ),
       ),
 
@@ -1555,6 +1770,8 @@ module.exports = grammar({
             ),
             seq(optional($.type_argument), field("type_name", $.identifier)), // Covers `type 'a option = Option<'a>`
           ),
+          // Trailing constraint clause, e.g. `type 'a C when 'a : comparison = ...`
+          optional($.type_argument_constraints),
         ),
       ),
 
@@ -1570,7 +1787,9 @@ module.exports = grammar({
     delegate_type_defn: ($) =>
       seq($.type_name, "=", scoped($.delegate_signature, $._indent, $._dedent)),
 
-    delegate_signature: ($) => seq("delegate", "of", $._type),
+    // `delegate of arg1:int * arg2:int -> int` — parameters may be named, which
+    // is the member-signature shape rather than a plain function type.
+    delegate_signature: ($) => seq("delegate", "of", choice($._type, $.curried_spec)),
 
     type_abbrev_defn: ($) =>
       seq(
@@ -1582,6 +1801,7 @@ module.exports = grammar({
             $._indent,
             choice(
               alias($._multiline_generic_function_type, $.function_type),
+              alias($._multiline_generic_compound_type, $.compound_type),
               $._type,
               $.measure,
               alias($._multiline_generic_type, $.generic_type),
@@ -1629,7 +1849,6 @@ module.exports = grammar({
       seq(
         optional($.attributes),
         optional("mutable"),
-        optional($.access_modifier),
         $.identifier,
         ":",
         $._type,
@@ -1695,7 +1914,7 @@ module.exports = grammar({
       seq($.union_type_field, repeat(seq("*", $.union_type_field))),
 
     union_type_field: ($) =>
-      prec.left(choice($._type, seq($.identifier, ":", $._type))),
+      prec.left(choice($._argument_type, seq($.identifier, ":", $._argument_type))),
 
     interface_type_defn: ($) =>
       prec.left(
@@ -1705,7 +1924,13 @@ module.exports = grammar({
           "=",
           seq(
             alias($._interface_begin, "interface"),
-            scoped(repeat($._type_defn_elements), $._indent, $._dedent),
+            // An interface body may open with base interfaces:
+            //   type I1 = interface inherit I0 end
+            scoped(
+              repeat(choice($._type_defn_elements, $.class_inherits_decl)),
+              $._indent,
+              $._dedent,
+            ),
             "end",
           ),
         ),
@@ -1785,12 +2010,30 @@ module.exports = grammar({
               $.method_or_prop_defn,
             ),
             seq(
+              // `static abstract` declares an interface member that
+              // implementing types must provide statically (F# 7 IWSAMs).
+              // An accessibility modifier *before* `abstract` parses and is
+              // rejected later (FS0561); after it, FSC fails in the parser
+              // ("Unexpected keyword 'public' in member definition"), so it is
+              // not accepted here. `inline` parses here (rejected as FS3151).
+              optional($.access_modifier),
+              optional("static"),
               "abstract",
               optional("member"),
-              optional($.access_modifier),
+              optional("inline"),
               $.member_signature,
             ),
-            seq("member", "val", $.property_or_ident, $._val_property_defn),
+            // `static member val` declares a static auto-property. Without the
+            // `static` here it fell through to the generic member branch with
+            // `val` as the method name, which mis-nested whatever followed.
+            seq(
+              optional("static"),
+              "member",
+              "val",
+              optional($.access_modifier),
+              $.property_or_ident,
+              $._val_property_defn,
+            ),
             seq("override", optional($.access_modifier), $.method_or_prop_defn),
             seq("default", optional($.access_modifier), $.method_or_prop_defn),
             seq(
@@ -1813,7 +2056,7 @@ module.exports = grammar({
         seq(
           field("instance", $.identifier),
           ".",
-          field("method", $.identifier),
+          field("method", choice($.identifier, $.op_identifier)),   // `member _.(+) a b`
         ),
         $._identifier_or_op,
       ),
@@ -1836,13 +2079,21 @@ module.exports = grammar({
         $._expression_block,
       ),
 
+    // Each accessor may carry its own attributes and `inline`:
+    // `with [<A>] get () = v and [<B>] inline set x = ...`.
     property_accessor: ($) =>
-      seq(choice("get", "set"), $._property_accessor_body),
+      seq(
+        optional($.attributes),
+        optional("inline"),
+        choice("get", "set"),
+        $._property_accessor_body,
+      ),
 
     _property_defn: ($) =>
       prec.left(
         PREC.APP_EXPR + 100001,
         seq(
+          optional($.type_arguments),   // `member this.TypeFunc<'a> = typeof<'a>.Name`
           optional(seq(":", $._type)),
           choice(
             seq("=", $._expression_block),
@@ -1903,6 +2154,9 @@ module.exports = grammar({
         optional($.access_modifier),
         "new",
         $._pattern,
+        // `new (args) as this = ...` binds the object being constructed, the
+        // same way a primary constructor does.
+        optional($.class_as_reference),
         "=",
         $._expression_block,
         optional(seq("then", $._expression_block)),
@@ -1941,11 +2195,18 @@ module.exports = grammar({
       ),
 
     extern_param: ($) =>
-      seq(
+      // prec: with the name optional, `_type identifier` could also be a postfix
+      // type (`int option`) — prefer reading the identifier as the name.
+      prec(1, seq(
         optional($.attributes),
         field("type", $._type),
-        field("name", $.identifier),
-      ),
+        // `bool & bFailIfExists` — a byref written with a space (the glued
+        // `bool&` is a byref_type).
+        optional("&"),
+        // `extern bool F(ExplicitRect&, ExplicitPoint)` — P/Invoke parameters
+        // need no names.
+        optional(field("name", $.identifier)),
+      )),
 
     class_inherits_decl: ($) =>
       prec.left(
@@ -2013,7 +2274,10 @@ module.exports = grammar({
     // using \u0008 to model \b
     _simple_char_char: (_) => token.immediate(/[^\n\t\r\u0008\a\f\v'\\]/),
     _unicodegraph_short: (_) => /\\u[0-9a-fA-F]{4}/,
-    _unicodegraph_long: (_) => /\\u[0-9a-fA-F]{8}/,
+    // The long form is spelled with a capital U (`\UXXXXXXXX`); with a
+    // lowercase `u` the short form above already claims the first four
+    // digits, so the long alternative was unreachable.
+    _unicodegraph_long: (_) => /\\U[0-9a-fA-F]{8}/,
     _trigraph: (_) => /\\[0-9]{3}/,
     _hexgraph_short: (_) => /\\x[0-9a-fA-F]{2}/,
 
@@ -2026,11 +2290,14 @@ module.exports = grammar({
         $._hexgraph_short,
       ),
 
-    // note: \n is allowed in strings
+    // note: \n, \r and \t are all allowed in strings.
+    // \r must be permitted so multi-line string literals survive CRLF
+    // endings (the \r of a \r\n break sits inside the string
+    // body); \t so a literal tab in a string is not a terminator.
     _simple_string_char: ($) =>
       choice(
         $._inside_string_marker,
-        token.immediate(prec(1, /[^\t\r\u0008\a\f\v\\"]/)),
+        token.immediate(prec(1, /[^\u0008\a\f\v\\"]/)),
       ),
 
     _string_char: ($) =>
@@ -2047,7 +2314,7 @@ module.exports = grammar({
     char: (_) =>
       prec(
         -1,
-        /'([^\n\t\r\u0008\a\f\v\\]|\\["\'ntbrafv]|\\[0-9]{3}|\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2}|(\\\\))?'B?/,
+        /'([^\n\t\r\u0008\a\f\v\\]|\\["\'ntbrafv]|\\[0-9]{3}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8}|\\x[0-9a-fA-F]{2}|(\\\\))?'B?/,
       ),
 
     format_string_eval: ($) =>
@@ -2122,7 +2389,7 @@ module.exports = grammar({
 
     bool: (_) => token(choice("true", "false")),
 
-    unit: (_) => token(prec(100000, "()")),
+    unit: (_) => token(prec(100000, /\([ \t]*\)/)),
 
     const: ($) =>
       choice(
@@ -2156,7 +2423,14 @@ module.exports = grammar({
     // Identifiers:
     identifier: (_) =>
       token(
-        choice(/[_\p{XID_Start}][_'\p{XID_Continue}]*/, /``([^`\n\r\t])+``/),
+        choice(
+          /[_\p{XID_Start}][_'\p{XID_Continue}]*/,
+          // Double-backtick identifier: any run of non-newline chars delimited
+          // by ``. Single backticks may appear inside (e.g. ``a `b` c``); the
+          // delimiter is the next `` pair, so a backtick is only consumed when
+          // followed by a non-backtick.
+          /``([^`\n\r\t]|`[^`\n\r\t])+``/,
+        ),
       ),
 
     long_identifier: ($) =>
@@ -2183,7 +2457,9 @@ module.exports = grammar({
           seq(
             "(",
             /\s*/,
-            choice("?", /[!%&*+-./<=>@^|~$?][!%&*+-./<=>@^|~?]*/, ".. .."),
+            // '-' sits last so it is a literal, not a `+`-to-`.` range that
+            // would admit ',' as an operator character.
+            choice("?", /[!%&*+./<=>@^|~$?-][!%&*+./<=>@^|~?-]*/, ".. .."),
             /\s*/,
             ")",
           ),
@@ -2197,7 +2473,7 @@ module.exports = grammar({
 
     prefix_op: ($) =>
       prec.left(
-        choice($._infix_or_prefix_op, "&&", "%%", repeat1("~"), /[!?][!%&*+-./<=>@^|~?]*/),
+        choice($._infix_or_prefix_op, "&&", "%%", repeat1("~"), /[!?][!%&*+./<=>@^|~?-]*/),
       ),
 
     infix_op: ($) =>
@@ -2208,12 +2484,15 @@ module.exports = grammar({
           token.immediate(prec(1, /[+-]/)),
           /[-+=<>|&^*'%@?][!%&*+./<=>@^|~?-]*/,
           /\/[!%&*+.<=>@^|~?-]*/,
+          // Dotted custom operators such as .*. .-. ./. — F# allows '.' to begin
+          // an operator. A lone '.' is member access and '..' is a range, so the
+          // char right after the first '.' must be a non-dot operator char.
+          /\.[!%&*+/<=>@^|~?-][!%&*+./<=>@^|~?-]*/,
           "=",
           "!=",
           ":=",
           "::",
           "$",
-          "?",
           "?",
           "?<-",
           "?->",
@@ -2242,7 +2521,7 @@ module.exports = grammar({
 
     ieee32: ($) =>
       choice(
-        seq($.float, token.immediate("f")),
+        seq($.float, token.immediate(/[fF]/)),
         seq($.xint, token.immediate("lf")),
       ),
     ieee64: ($) => seq($.xint, token.immediate("LF")),
@@ -2293,6 +2572,11 @@ module.exports = grammar({
         choice(
           /\/\/([^/\n\r][^\n\r]*)?/,
           /\/{4,}[^\n\r]*/,
+          // Shebang line for .fsx scripts (e.g. #!/usr/bin/env dotnet fsi).
+          // F# has no #-comment syntax; fsi simply skips this line, so we lex
+          // it as trivia. Widening this token costs ~0 table size (unlike a
+          // compiler_directive_decl production).
+          /#![^\n\r]*/,
         ),
       ),
     xml_doc: (_) => token(/\/\/\/([^/\n\r][^\n\r]*)?/),
@@ -2304,11 +2588,18 @@ module.exports = grammar({
         choice(
           seq(
             "#nowarn",
-            choice(alias($._string_literal, $.string), $.int),
+            repeat1(choice(alias($._string_literal, $.string), $.int)),
             $._newline_not_aligned,
           ),
           seq("#warnon", $.int, $._newline_not_aligned),
-          seq("#light", $._newline_not_aligned),
+          // `#light` also takes an explicit argument: `#light "off"` selects
+          // the legacy verbose syntax, `#light "on"` the default. The string
+          // is optional so bare `#light` keeps working.
+          seq(
+            "#light",
+            optional(alias($._string_literal, $.string)),
+            $._newline_not_aligned,
+          ),
         ),
       ),
 
@@ -2376,13 +2667,21 @@ module.exports = grammar({
       // Besides expressions, allow body-less let bindings: a branch often
       // ends with `let x = ...` whose body is the code following #endif
       // (the classic `#if INTERACTIVE` pattern).
+      // prec(-3) on the items: at module-body positions the same content
+      // also parses as _module_elem; prefer that statically instead of
+      // declaring a GLR conflict — the split otherwise stays alive for the
+      // whole branch and multiplies version pressure inside module-spanning
+      // directives.
       ($) =>
         repeat(
-          seq(
-            optional($._newline),
-            choice(
-              $._expression,
-              alias($.value_declaration, $.declaration_expression),
+          prec(
+            -3,
+            seq(
+              optional($._newline),
+              choice(
+                $._expression,
+                alias($.value_declaration, $.declaration_expression),
+              ),
             ),
           ),
         ),
@@ -2391,7 +2690,10 @@ module.exports = grammar({
     ...preprocIf(
       "_in_module_body",
       ($) => repeat(seq(optional($._newline), $._module_body_elem)),
-      -2,
+      // -1 (above _in_expression's -2): where both variants apply — inside a
+      // `module X =` body — the module-body variant subsumes expressions, so
+      // prefer it statically rather than keeping a GLR split alive.
+      -1,
     ),
     ...preprocIf(
       "_in_class_definition",

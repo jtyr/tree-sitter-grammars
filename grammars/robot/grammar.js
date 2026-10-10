@@ -74,7 +74,7 @@ module.exports = grammar({
   rules: {
     source_file: ($) =>
       seq(
-        optional(/\s+/), // Allows whitespace before the first section
+        repeat(choice($.comment, $._empty_line)),
         repeat($.section),
       ),
 
@@ -138,6 +138,7 @@ module.exports = grammar({
     keyword_definition: ($) =>
       seq(
         alias($.keyword_name, $.name),
+        optional(seq($._separator, $.keyword_setting)),
         $._line_break,
         alias($.keyword_definition_body, $.body),
       ),
@@ -508,7 +509,22 @@ module.exports = grammar({
       ),
 
     scalar_variable: ($) =>
-      seq("${", optional(" "), $.variable_name, optional(" "), "}"),
+      seq(
+        "${",
+        optional(" "),
+        $.variable_name,
+        optional(
+          repeat(
+            seq(
+              "[",
+              choice($.variable_key, $.scalar_variable),
+              "]"
+            )
+          )
+        ),
+        optional(" "),
+        "}"
+      ),
 
     list_variable: ($) =>
       seq("@{", optional(" "), $.variable_name, optional(" "), "}"),
@@ -517,15 +533,30 @@ module.exports = grammar({
       seq("&{", optional(" "), $.variable_name, optional(" "), "}"),
 
     inline_python_expression: ($) =>
-      prec.left(
-        seq(
-          "${{",
-          alias(repeat(choice("}", /[^\r\n}]+/)), $.python_expression),
-          "}}",
-        ),
+      seq("${{", $.python_expression, "}}"),
+
+    python_expression: ($) =>
+      repeat1(
+        choice(
+          alias($._python_string, $.python_string),
+          alias(token(/[^()\[\]{}'"]+/), $.python_chunk),
+          seq("(", $.python_expression, ")"),
+          seq("[", $.python_expression, "]"),
+          seq("{", $.python_expression, "}")
+        )
       ),
 
-    variable_name: ($) => /[^{}]+/,
+    _python_string: ($) =>
+      token(
+        choice(
+          /"[^"\\]*(\\.[^"\\]*)*"/,
+          /'[^'\\]*(\\.[^'\\]*)*'/
+        )
+      ),
+
+    variable_name: ($) => /[^{}\[\]]+/,
+
+    variable_key: ($) => /[^\[\]}$@&]+/,
 
     text_chunk: ($) => $._text_chunk,
 

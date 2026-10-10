@@ -30,6 +30,10 @@ module.exports = grammar({
 
   extras: $ => [$.comment, /\s/],
 
+  // `extend .foo.Bar {` and the field `extend.foo.Bar f = 1;` share a prefix
+  // up to the token after the type name.
+  conflicts: $ => [[$.extend, $._keyword_identifier]],
+
   rules: {
     // proto = syntax { import | package | option | topLevelDef | emptyStatement }
     // topLevelDef = message | enum | service
@@ -52,7 +56,7 @@ module.exports = grammar({
     // edition  = "edition" "=" quote numeric quote ";"
     edition: $ => seq('edition', '=', field('year', $.string), ';'),
     // syntax = "syntax" "=" quote "proto3" quote ";"
-    syntax: $ => seq('syntax', '=', choice('"proto3"', '"proto2"'), ';'),
+    syntax: $ => seq('syntax', '=', field('version', $.string), ';'),
 
     // import = "import" [ "weak" | "public" | "option" ] strLit ";"
     import: $ => seq(
@@ -79,14 +83,19 @@ module.exports = grammar({
       ';',
     ),
 
+    // optionName = ( ident | "(" [ "." ] fullIdent ")" )
+    //              { "." ( ident | "(" [ "." ] fullIdent ")" ) }
     _option_name: $ => seq(
       choice(
         $.identifier,
-        seq('(', $.full_ident, ')'),
+        seq('(', optional('.'), $.full_ident, ')'),
       ),
       repeat(seq(
         '.',
-        $.identifier,
+        choice(
+          $.identifier,
+          seq('(', optional('.'), $.full_ident, ')'),
+        ),
       )),
     ),
 
@@ -165,13 +174,16 @@ module.exports = grammar({
 
     message_name: $ => $.identifier,
 
+    // extend = "extend" messageType "{" {field | group | emptyStatement} "}"
+    // messageType = [ "." ] { ident "." } messageName
     extend: $ => seq(
       'extend',
+      optional('.'),
       $.full_ident,
       $.message_body,
     ),
 
-    // group = label "group" groupName "=" fieldNumber messageBody
+    // group = label "group" groupName "=" fieldNumber [ "[" fieldOptions "]" ] messageBody
     // label = "required" | "optional" | "repeated"
     // Proto2 only; deprecated but still valid.
     group: $ => seq(
@@ -180,6 +192,7 @@ module.exports = grammar({
       $.message_name,
       '=',
       $.field_number,
+      optional(seq('[', $.field_options, ']')),
       $.message_body,
     ),
 
@@ -220,17 +233,20 @@ module.exports = grammar({
       repeat(choice(
         $.option,
         $.oneof_field,
+        $.group,
         $.empty_statement,
       )),
       '}',
     ),
 
+    // oneofField = type fieldName "=" fieldNumber [ "[" fieldOptions "]" ] ";"
     oneof_field: $ => seq(
       $.type,
       $.identifier,
       '=',
       $.field_number,
       optional(seq('[', $.field_options, ']')),
+      ';',
     ),
 
     // mapField = "map" "<" keyType "," type ">" mapName "=" fieldNumber [ "[" fieldOptions "]" ] ";"
@@ -297,9 +313,11 @@ module.exports = grammar({
       ';',
     ),
 
+    // extensions = "extensions" ranges [ "[" fieldOptions "]" ] ";"
     extensions: $ => seq(
       'extensions',
       $.ranges,
+      optional(seq('[', $.field_options, ']')),
       ';',
     ),
 
@@ -313,11 +331,6 @@ module.exports = grammar({
       )),
     ),
 
-    field_names: $ => seq(
-      $._identifier_or_string,
-      repeat(seq(',', $._identifier_or_string)),
-    ),
-
     reserved_field_names: $ => seq(
       $.reserved_identifier,
       repeat(seq(',', $.reserved_identifier)),
@@ -326,12 +339,30 @@ module.exports = grammar({
     // messageType = [ "." ] { ident "." } messageName
     message_or_enum_type: $ => seq(
       optional('.'),
-      repeat(seq(
-        $.identifier,
+      optional(seq(
+        choice($.identifier, $._keyword_identifier),
         '.',
+        repeat(seq($.identifier, '.')),
       )),
       $.identifier,
     ),
+
+    // Keywords that can start a statement in a message or oneof body, and so
+    // lex as keywords there. As the first segment of a qualified type name,
+    // e.g. `message.v1.Foo`, they are ordinary identifiers.
+    _keyword_identifier: $ => alias(choice(
+      'enum',
+      'export',
+      'extend',
+      'extensions',
+      'group',
+      'local',
+      'map',
+      'message',
+      'oneof',
+      'option',
+      'reserved',
+    ), $.identifier),
 
     // fieldNumber = intLit;
     field_number: $ => $.int_lit,
@@ -403,21 +434,35 @@ module.exports = grammar({
     // based on the "a bit of everything" grpc-gateway example which has
     // wildly inconsistent syntax and yet it actually parses and compiles
     // with protoc.
-    block_lit: $ => seq(
-      '{',
-      repeat(seq(
-        choice(
-          $.identifier,
-          seq('[', $.full_ident, ']'),
-        ),
-        optional(':'),
-        choice(
-          $.constant,
-          array_of($.constant),
-        ),
-        optional(choice(',', ';')),
-      )),
-      '}',
+    block_lit: $ => choice(
+      seq('{', repeat($._block_field), '}'),
+      // Text format also permits angle brackets to delimit a message value.
+      seq('<', repeat($._block_field), '>'),
+    ),
+
+    _block_field: $ => seq(
+      choice(
+        $.identifier,
+        $.extension_name,
+      ),
+      optional(':'),
+      choice(
+        $.constant,
+        $.array_lit,
+      ),
+      optional(choice(',', ';')),
+    ),
+
+    // A repeated field's values in an aggregate option value: { f: [1, 2] }
+    array_lit: $ => array_of($.constant),
+
+    // An extension name, or an Any type URL: [type.googleapis.com/foo.Bar]
+    extension_name: $ => seq(
+      '[',
+      optional('.'),
+      field('name', $.full_ident),
+      optional(seq('/', field('type', $.full_ident))),
+      ']',
     ),
 
     // identifier = letter { letter | decimalDigit | "_" }
@@ -451,7 +496,6 @@ module.exports = grammar({
         ),
       ),
     ),
-    _identifier_or_string: $ => choice($.identifier, $.string),
 
     // fullIdent = ident { "." ident }
     full_ident: $ => seq(
@@ -532,7 +576,7 @@ module.exports = grammar({
         seq(
           '"',
           repeat(choice(
-            token.immediate(prec(1, /[^"\\]+/)),
+            alias(token.immediate(prec(1, /[^"\\]+/)), $.string_content),
             $.escape_sequence,
           )),
           '"',
@@ -541,7 +585,7 @@ module.exports = grammar({
         seq(
           '\'',
           repeat(choice(
-            token.immediate(prec(1, /[^'\\]+/)),
+            alias(token.immediate(prec(1, /[^'\\]+/)), $.string_content),
             $.escape_sequence,
           )),
           '\'',

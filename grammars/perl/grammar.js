@@ -225,7 +225,6 @@ module.exports = grammar({
     // all of the following go GLR b/c they need extra tokens to allow postfixy autoquotes
     [$.return_expression],
     [$.function, $.bareword],
-    [$.function, $.function_call_expression],
     [$._variables, $.indirect_object],
     // a builtin filehandle after a list-op is ambiguous between the indirect
     // object slot (`print STDERR LIST`) and a plain term argument
@@ -431,7 +430,7 @@ module.exports = grammar({
     _for_initializer: $ => choice(
       seq(optional(choice('my', 'state', 'our')), field('variable', $.scalar)),
       seq(optional(choice('my', 'state', 'our')), field('variable', $.refalias_variable)),
-      seq('my', field('variables', paren_list_of($.scalar))),
+      seq('my', paren_list_of(field('variables', $.scalar))),
     ),
     for_statement: $ =>
       seq($._KW_FOR,
@@ -580,6 +579,13 @@ module.exports = grammar({
         seq(field('hashref', $._term), '->', '%', $._slice_key_subscript)),
     ),
 
+    // A parenthesized expression is its own node rather than a transparent
+    // `('(' _expr ')')`: a field wrapping a transparent-paren term (e.g. binop's
+    // `right:`) otherwise splats onto the `(`/`)` tokens, since tree-sitter
+    // attaches a field to every child spliced up from a hidden/inline rule (see
+    // upstream tree-sitter#1526). Every mature grammar (js/python/c/rust) gives
+    // parens a named node for exactly this reason. Costs zero extra parser states.
+    parenthesized_expression: $ => seq('(', $._expr, ')'),
     _term: $ => choice(
       $.readline_expression,
       $.fileglob_expression,
@@ -601,7 +607,7 @@ module.exports = grammar({
       $.conditional_expression,
       $.refgen_expression,
       $.localization_expression,
-      seq('(', $._expr, ')'),
+      $.parenthesized_expression,
       $.quoted_word_list,
       $.heredoc_token,
       $.command_heredoc_token,
@@ -851,7 +857,7 @@ module.exports = grammar({
           // Unambiguous: the variable always starts with a sigil, never a bareword.
           seq(optional(field('type', $.package)), field('variable', $._declared_vars)),
           field('variable', $.refalias_variable),
-          field('variables', $._decl_variable_list)),
+          $._decl_variable_list),
         optseq(':', optional(field('attributes', $.attrlist))))
     ),
 
@@ -863,8 +869,8 @@ module.exports = grammar({
     // first element (while still allowing empty/trailing slots after a comma)
     // keeps the nested-group `(` unambiguous.
     _decl_variable_list_body: $ => seq(
-      $._decl_variable_list_element,
-      repeat(seq(',', optional($._decl_variable_list_element)))
+      field('variables', $._decl_variable_list_element),
+      repeat(seq(',', optional(field('variables', $._decl_variable_list_element))))
     ),
 
     _decl_variable_list_element: $ => choice(
@@ -978,22 +984,24 @@ module.exports = grammar({
     // filehandles (in the indirect-object slot and as filetest/func1 operands)
     // can't collide with a user sub. Non-standard bareword handles are punted.
     _builtin_filehandle: $ => choice('STDIN', 'STDOUT', 'STDERR'),
-    _unambiguous_function: $ => alias(choice($._bareword, $._listop_keyword, $._indirob_listop, $.amper_sub), $.function),
+    _unambiguous_function: $ => alias(choice($._listop_keyword, $._indirob_listop, $.amper_sub), $.function),
     function_call_expression: $ => choice(
       seq(field('function', alias($.amper_sub, $.function))),
       // the usage of NONASSOC here is to make it that any parse of a paren after a func
       // automatically becomes a non-ambiguous function call
       seq(field('function', $._unambiguous_function), '(', $._NONASSOC, optional(field('arguments', $._expr)), recoverParen($)),
+      // A userland bareword reduces through the named `function` rule here, the
+      // same symbol the no-paren form uses, so `foo(` never forks into two
+      // stacks; the _NONASSOC then settles it as a paren call rather than a
+      // no-paren call whose first argument is parenthesized.
+      seq(field('function', $.function), '(', $._NONASSOC, optional(field('arguments', $._expr)), recoverParen($)),
       // The indirect-object call form `FUNC(INDIROB ARGS)` is only valid for the
-      // indirob set (print/printf/say/exec/system) and userland barewords — NOT
-      // the other builtin list-ops. Otherwise `bless({%$arg}, $class)` reads its
-      // leading `{…}` as a block indirect-object instead of a hashref argument.
-      // Listed as the disjoint pieces (`_indirob_listop` direct, the named
-      // `function` rule for barewords) rather than one combined alias, so a
-      // keyword reduces to a single hidden rule (no reduce/reduce that would
-      // starve print's indirob in favor of the hashref reading).
+      // indirob set (print/printf/say/exec/system) — NOT the other builtin
+      // list-ops, and not userland subs (perl rejects `myfunc($fh "x")`).
+      // Otherwise `bless({%$arg}, $class)` reads its leading `{…}` as a block
+      // indirect-object instead of a hashref argument, and `foo($h{x})` reads
+      // `$h` as an indirect object followed by a `{x}` hashref.
       seq(field('function', alias($._indirob_listop, $.function)), '(', $._NONASSOC, $.indirect_object, field('arguments', $._expr), recoverParen($)),
-      seq(field('function', $.function), '(', $._NONASSOC, $.indirect_object, field('arguments', $._expr), recoverParen($)),
     ),
     _tricky_indirob_hashref: $ => seq($._PERLY_BRACE_OPEN, $._expr, $._PERLY_SEMICOLON, '}'),
     ambiguous_function_call_expression: $ =>

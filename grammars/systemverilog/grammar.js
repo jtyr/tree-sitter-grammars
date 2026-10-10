@@ -927,7 +927,8 @@ const rules = {
 
   constraint_block_item: $ => choice(
     seq('solve', $.solve_before_list, 'before', $.solve_before_list, ';'),
-    $.constraint_expression
+    $.constraint_expression,
+    $._directives // Out of LRM
   ),
 
   solve_before_list: $ => commaSep1($.constraint_primary),
@@ -954,7 +955,7 @@ const rules = {
 
   constraint_set: $ => prec('constraint_set', choice(
     $.constraint_expression,
-    seq('{', repeat($.constraint_expression), '}')
+    seq('{', repeat(choice($.constraint_expression, $._directives)), '}') // _directives: allow ifdef/endif inside inline constraint blocks (if/foreach bodies)
   )),
 
   expression_or_dist: $ => prec('expression_or_dist', seq(
@@ -3705,10 +3706,17 @@ const rules = {
 
   list_of_arguments: $ => list_of_args($, 'list_of_arguments', $.expression),
 
-  method_call: $ => seq(
-    $._method_call_root,
-    choice('.', '::'), // :: Out of LRM: Needed to support static method calls
-    $.method_call_body
+  method_call: $ => choice(
+    seq($._method_call_root, '.', $.method_call_body),
+    seq($._method_call_root, '::', alias($.static_method_call_body, $.method_call_body)) // Out of LRM
+  ),
+
+  // Out of LRM: Added to remove ambiguity between member access and static
+  //             method call by enforcing usage of parenthesis for the latter.
+  static_method_call_body: $ => seq(
+    field('name', $.method_identifier),
+    repeat($.attribute_instance),
+    field('arguments', seq('(', optional($.list_of_arguments), ')'))
   ),
 
   method_call_body: $ => prec.right(choice(
@@ -3750,7 +3758,10 @@ const rules = {
     optseq('with', optseq('(', optional($.identifier_list), ')'), $.constraint_block)
   )),
 
-  variable_identifier_list: $ => commaSep1($.variable_identifier),
+  variable_identifier_list: $ => commaSep1(choice(
+    $.variable_identifier,
+    $.hierarchical_variable_identifier, // Out of LRM: std::randomize() accepts hierarchical variables
+  )),
 
   identifier_list: $ => commaSep1($._identifier),
 
@@ -3880,7 +3891,7 @@ const rules = {
     $.constant_expression, choice('+:', '-:'), $.constant_expression
   ),
 
-  expression: $ => choice(
+  expression: $ => prec('expression', choice(
     $.primary,
     $._unary_expression,
     $.inc_or_dec_expression,
@@ -3891,7 +3902,7 @@ const rules = {
     $.tagged_union_expression,
     $.text_macro_usage,               // Out of LRM
     $.file_or_line_compiler_directive // Out of LRM
-  ),
+  )),
 
   tagged_union_expression: $ => prec.right(seq(
     'tagged', $.member_identifier, optional($.primary)
@@ -4504,6 +4515,7 @@ const rules = {
     $.timescale_compiler_directive,
     $.default_nettype_compiler_directive,
     $.unconnected_drive_compiler_directive,
+    $.nounconnected_drive_compiler_directive,
     $.celldefine_compiler_directive,
     $.endcelldefine_compiler_directive,
     $.pragma,
@@ -4546,7 +4558,7 @@ const rules = {
     '`define',
     $.text_macro_name,
     optional($.macro_text),
-    token.immediate(/\r?\n/),
+    token.immediate(/[ \t]*\r?\n/),
   ),
 
   // LRM 22.5.1: If formal arguments are used, the list of formal argument names shall be enclosed in
@@ -4688,6 +4700,7 @@ const rules = {
     choice('pull0', 'pull1'),
     token.immediate(/\r?\n/),
   ),
+  nounconnected_drive_compiler_directive: $ => '`nounconnected_drive',
 
 
 // ** 22.10 `celldefine and `endcelldefine
@@ -5572,6 +5585,12 @@ module.exports = grammar({
     ['_simple_type', 'hierarchical_identifier'],
 
 
+    // Allow conditional compilation on constraint blocks (#67)
+    // 1:  'randomize'  'with'  '{'  (_directives  text_macro_usage)  •  '-'  …  (precedence: '_directives')
+    // 2:  'randomize'  'with'  '{'  (expression  text_macro_usage)  •  '-'  …
+    ['expression', '_directives'],
+
+
     // Leave these two standalone to avoid having to replicate code with function 'list_of_args'
     ['property_list_of_arguments'],
     ['sequence_list_of_arguments'],
@@ -5644,6 +5663,9 @@ module.exports = grammar({
     //   1:  module_nonansi_header  'initial'  (hierarchical_identifier  _identifier)  •  '.'  …       (precedence: 'hierarchical_identifier')
     //   2:  module_nonansi_header  'initial'  (hierarchical_identifier_repeat1  _identifier  •  '.')  (precedence: 'hierarchical_identifier')
     [$.hierarchical_identifier],
+    // std::randomize()'s variable_identifier_list allows hierarchical names,
+    // causing an LR conflict with hierarchical_identifier at _identifier ','.
+    [$.hierarchical_identifier, $.variable_identifier_list],
 
 
     // From the LRM:
@@ -6212,6 +6234,10 @@ module.exports = grammar({
     [$.constant_primary, $.net_lvalue, $.hierarchical_identifier],
     [$.data_type, $.constant_primary, $.hierarchical_identifier],
 
+    // Allow conditional compilation on constraint blocks (#67)
+    [$.constant_expression, $._directives],
+    [$.expression, $.variable_lvalue, $._directives],
+    [$.constant_expression, $.expression, $._directives],
   ],
 
 });

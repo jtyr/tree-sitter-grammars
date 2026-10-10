@@ -1,5 +1,8 @@
 ; Comments
-(comment) @comment @spell
+(comment) @comment
+
+(comment
+  (body) @spell)
 
 ; General
 (int) @number
@@ -53,3 +56,9 @@
   "?"
   "*"
 ] @character.special
+
+[
+  "="
+  "+="
+  "-="
+] @operator
