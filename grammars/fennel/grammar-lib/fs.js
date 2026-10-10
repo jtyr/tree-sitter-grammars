@@ -65,7 +65,9 @@ function flatten_extensions(extensions) {
 		(acc, extension) => _.mergeWith(
 			acc,
 			extension,
-			(base, extension) => Array.isArray(base) ? [...base, extension] : undefined,
+			(base, extension) => Array.isArray(base)
+				? [...base, ...(Array.isArray(extension) ? extension : [extension])]
+				: undefined,
 		),
 		{ rules: {}, forms: {}, inline: [], conflicts: [] },
 	);

@@ -10,7 +10,7 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-const C = require('tree-sitter-c/grammar');
+const C = require('../c/grammar');
 
 const PREC = Object.assign(C.PREC, {
   LAMBDA: 18,

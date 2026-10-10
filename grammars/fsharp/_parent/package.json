@@ -1,8 +1,11 @@
 {
   "name": "tree-sitter-fsharp",
-  "version": "0.3.1",
-  "description": "",
-  "repository": "https://github.com/tree-sitter/tree-sitter-fsharp",
+  "version": "0.3.12",
+  "description": "F# grammars (implementation and signature files) for tree-sitter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ionide/tree-sitter-fsharp.git"
+  },
   "license": "MIT",
   "author": "Nikolaj Sidorenco",
   "main": "bindings/node",
@@ -14,6 +17,7 @@
     "common/**",
     "fsharp/src/**",
     "fsharp_signature/src/**",
+    "fsharp_signature/queries/*",
     "queries/*",
     "*.wasm"
   ],
@@ -21,21 +25,26 @@
     "eslint": "^10.0.3",
     "eslint-config-google": "^0.14.0",
     "prebuildify": "^6.0.1",
-    "tree-sitter-cli": "^0.26.6"
+    "tree-sitter-cli": "^0.27.0"
   },
   "peerDependencies": {
     "tree-sitter": "^0.25.0"
   },
   "peerDependenciesMeta": {
-    "tree_sitter": {
+    "tree-sitter": {
       "optional": true
     }
   },
   "scripts": {
     "install": "node-gyp-build",
-    "generate": "for dir in fsharp fsharp_signature; do cd $dir; tree-sitter generate; cd -; done",
+    "prepack": "node scripts/npm-readme.js swap",
+    "postpack": "node scripts/npm-readme.js restore",
+    "generate": "tree-sitter generate --output fsharp/src fsharp/grammar.js && tree-sitter generate --output fsharp_signature/src fsharp_signature/grammar.js",
     "prestart": "tree-sitter build --wasm",
     "start": "tree-sitter playground",
+    "check:invalid": "dotnet fsi scripts/check-fsc-detected.fsx",
+    "check:baseline": "dotnet fsi scripts/check-parse-baseline.fsx",
+    "check:highlights": "bash scripts/highlight-coverage.sh --check",
     "test": "node --test bindings/node/*_test.js"
   },
   "dependencies": {
