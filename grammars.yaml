@@ -57,7 +57,7 @@
 - language: apex
   name: soql
   url: https://github.com/aheber/tree-sitter-sfapex
-  ref: 1a4baf203f0bf1b8ab8bcaed3a6ce011a9c1837f
+  ref: 06b8d2dc9258066df4139592c876bf5c37ce9fe5
   path: soql
   metadata:
     hasParser: true
@@ -466,7 +466,7 @@
 
 - language: circom
   url: https://github.com/Decurity/tree-sitter-circom
-  ref: 75f447fd955ec59082103f7e12fa46953d3f9484
+  ref: 2b08e767722ba5474f5ae1d10158f78956602e2a
   metadata:
     hasParser: true
     hasHighlights: true
@@ -476,7 +476,7 @@
 - language: clojure
   url: https://github.com/sogaiu/tree-sitter-clojure
   branch: master
-  ref: e43eff80d17cf34852dcd92ca5e6986d23a7040f
+  ref: 56a4c9de7940d18bad086cce0815544e0ac2b7f6
   metadata:
     hasParser: true
     hasHighlights: true
@@ -951,7 +951,7 @@
 
 - language: elixir
   url: https://github.com/elixir-lang/tree-sitter-elixir
-  ref: cb32ccbe17c67037b09e31bf9beb22cdae6ed8e9
+  ref: 549a016863d32733e3ec0e6d47a05d8f8076d2d6
   metadata:
     hasParser: true
     hasScanner: true
@@ -1448,7 +1448,7 @@
 
 - language: gnuplot
   url: https://github.com/dpezto/tree-sitter-gnuplot
-  ref: a29b0c5d4f6f67a7dd308810a9ef0dc4931a7bb3
+  ref: c433242ddca2feda59dde22d9929d1e3124a541a
   metadata:
     hasParser: true
     hasHighlights: true
@@ -2131,7 +2131,7 @@
 
 - language: kcl
   url: https://github.com/kcl-lang/tree-sitter-kcl
-  ref: 6a5cc921928660cd6756cd6e0d636d9e24ea348e
+  ref: 9d104d10d98fe8be2c7a04e8bd91008d59641cdf
   metadata:
     hasParser: true
     hasScanner: true
@@ -2266,7 +2266,7 @@
 
 - language: lean
   url: https://github.com/Julian/tree-sitter-lean
-  ref: fefc2eff9a83eeb72cda44646709e40e33e09175
+  ref: f35fa9b1ad3edd22c2b07b61f569a6d9c8e07d6e
   metadata:
     hasParser: true
     hasScanner: true
@@ -2706,7 +2706,7 @@
 - language: nix
   url: https://github.com/nix-community/tree-sitter-nix
   branch: master
-  ref: 0645c95c47b272f23d15c1e83446973401bd1a53
+  ref: 1633dacf24b23a966b5d136120360cf0c74bf895
   metadata:
     hasParser: true
     hasScanner: true
@@ -2913,7 +2913,7 @@
 
 - language: pascal
   url: https://github.com/Isopod/tree-sitter-pascal
-  ref: v0.10.2
+  ref: v0.10.3
   metadata:
     hasParser: true
     hasHighlights: true
@@ -3603,7 +3603,7 @@
 
 - language: scala
   url: https://github.com/tree-sitter/tree-sitter-scala
-  ref: v0.26.13
+  ref: v0.26.14
   metadata:
     hasParser: true
     hasScanner: true
@@ -3912,7 +3912,7 @@
 
 - language: ssh_client_config
   url: https://github.com/metio/tree-sitter-ssh-client-config
-  ref: 23c00eb36c3658b428433a1d1139fb120d0539ac
+  ref: 4f2a11d286a9b1e963a1ef50cdd405dcef06afff
   metadata:
     hasParser: true
     hasHighlights: true
@@ -4065,7 +4065,7 @@
 
 - language: swift
   url: https://github.com/alex-pinkus/tree-sitter-swift
-  ref: fef1236022ccde2d2bc5c32d4db8947c87a7f848
+  ref: a8bf5cf40bf3ff4588ebbfe40b71c7df5754681f
   generate: true
   metadata:
     hasParser: true
