@@ -65,8 +65,14 @@ const PRECS = {
   open_end_range: -1,
   expr: -1,
   ty: -1,
+  // `try`/`await` on a bare name in a condition (`_condition_effect_on_name`): above the
+  // routes through `_expression`, which only meet it on a `{` or `,` ending the condition.
+  condition_effect: 1,
   call: -2,
-  ternary: -2,
+  // Above `ternary_binary_suffix`: a `?` after a ternary's last operand opens a ternary of that operand
+  // (`a ? b : c ? d : e` is `a ? b : (c ? d : e)`, as Swift reads it) instead of ending the first one
+  // there, which read `(a ? b : c) ? d : e`.
+  ternary: -1,
   try: -2,
   call_suffix: -2,
   range_suffix: -2,
@@ -297,7 +303,7 @@ module.exports = grammar({
     // custom scanner so that it can avoid triggering `$.bang` for that case.
     $._fake_try_bang,
   ],
-  inline: ($) => [$._locally_permitted_modifiers],
+  inline: ($) => [$._locally_permitted_modifiers, $._condition_effect_on_name],
   rules: {
     ////////////////////////////////
     // File Structure
@@ -1284,8 +1290,85 @@ module.exports = grammar({
         )
       ),
     _if_condition_sequence_item: ($) =>
-      choice($._if_let_binding, $._expression, $.availability_condition),
+      choice($._if_let_binding, $._condition_value, $.availability_condition),
     _if_let_binding: ($) =>
+      choice(
+        seq(
+          $._direct_or_indirect_binding,
+          optional(seq($._equal_sign, $._expression)),
+          optional($.where_clause)
+        ),
+        seq(
+          $._direct_or_indirect_binding,
+          $._equal_sign,
+          $._condition_effect_on_name,
+          optional($.where_clause)
+        )
+      ),
+    // `try`/`await` on a bare name or member in a condition (`if let x = try? await task { ... }`,
+    // `while let x = await queue { ... }`, `if await item.isReady { ... }`) and in a `switch` subject
+    // (`switch await state { ... }`). Through `_expression`, the `{` after the name was taken for a
+    // trailing closure passed to it, since `try` and `await` reach a call through their own
+    // higher-precedence routes, and Swift never reads a trailing closure there. These productions
+    // exist only in those positions, and only the `{` or `,` that may end one decides between
+    // them and `_expression`: every other shape (`try a == b`, `try? f()`, `await a.b()`) still goes
+    // through `_expression`. The trees are the same `try_expression` and `await_expression`.
+    //
+    // `guard` (ended by `else`) and `repeat ... while` (ended by the statement's end) have no `{` to
+    // misread, so they keep the plain `_plain_condition_sequence_item`.
+    //
+    // The factoring of these rules (a hidden `_condition_value` for a plain condition, the `let`
+    // binding as two productions, `_condition_effect_on_name` inlined, `guard` and `repeat` left out)
+    // is deliberate. Query analysis in `ts_query_new` never converges for patterns on
+    // `dictionary_literal` or `if_statement` and stops at its iteration cap, so its cost is the size of
+    // its walk at that point, which swings by orders of magnitude with how these productions are
+    // factored, even between factorings that build the same trees: the first version of this change
+    // (a `choice` with `_condition_effect_on_name` in each of the three positions) made compiling some
+    // `dictionary_literal` queries ~400x slower. Re-time query compilation after changing them.
+    _condition_value: ($) => choice($._expression, $._condition_effect_on_name),
+    _condition_effect_on_name: ($) =>
+      prec(
+        PRECS.condition_effect,
+        choice(
+          alias($._condition_try_on_name, $.try_expression),
+          alias($._condition_await_on_name, $.await_expression)
+        )
+      ),
+    _condition_try_on_name: ($) =>
+      prec(
+        PRECS.condition_effect,
+        seq(
+          $.try_operator,
+          field(
+            "expr",
+            choice(
+              alias($._condition_await_on_name, $.await_expression),
+              $._condition_name
+            )
+          )
+        )
+      ),
+    _condition_await_on_name: ($) =>
+      prec(
+        PRECS.condition_effect,
+        seq($._await_operator, field("expr", $._condition_name))
+      ),
+    // A generic type's initializer (`if let b = try? Box<Int>(x) { ... }`) is here too: `try` and `await` reach a
+    // call through a route of their own, but a `constructor_expression` only through `_expression`, where the `{`
+    // went to `Box<Int>(x)` as a trailing closure and the only reading left was the comparisons
+    // `(Box < Int) > (x)`.
+    _condition_name: ($) =>
+      prec(
+        PRECS.condition_effect,
+        choice(
+          $.simple_identifier,
+          $.navigation_expression,
+          $.constructor_expression
+        )
+      ),
+    _plain_condition_sequence_item: ($) =>
+      choice($._plain_if_let_binding, $._expression, $.availability_condition),
+    _plain_if_let_binding: ($) =>
       seq(
         $._direct_or_indirect_binding,
         optional(seq($._equal_sign, $._expression)),
@@ -1296,7 +1379,7 @@ module.exports = grammar({
         PRECS["if"],
         seq(
           "guard",
-          sep1(field("condition", $._if_condition_sequence_item), ","),
+          sep1(field("condition", $._plain_condition_sequence_item), ","),
           $["else"],
           $._block
         )
@@ -1306,7 +1389,7 @@ module.exports = grammar({
         PRECS["switch"],
         seq(
           "switch",
-          field("expr", $._expression),
+          field("expr", choice($._expression, $._condition_effect_on_name)),
           "{",
           repeat($.switch_entry),
           "}"
@@ -1514,7 +1597,7 @@ module.exports = grammar({
           // Make sure we make it to the `while` before assuming this is a parameter pack.
           repeat($._implicit_semi),
           "while",
-          sep1(field("condition", $._if_condition_sequence_item), ",")
+          sep1(field("condition", $._plain_condition_sequence_item), ",")
         )
       ),
     control_transfer_statement: ($) =>
@@ -2120,10 +2203,15 @@ module.exports = grammar({
     attribute: ($) =>
       seq(
         "@",
-        $.user_type,
+        alias($._attribute_name, $.user_type),
         // attribute arguments are a mess of special cases, maybe this is good enough?
         optional(seq("(", optional(sep1Opt($._attribute_argument, ",")), ")"))
       ),
+    // An attribute's name is a `user_type` whose dots are plain, immediate `.` tokens rather than the scanner's
+    // `_dot`. After a name the scanner may then tell an attribute apart from a dotted name read as a type, which it
+    // ends at a newline before a bracketed group that starts a statement: after an attribute, a function type,
+    // closure parameters or a capture list may follow on the next line (`{ @MainActor` NEWLINE `[weak self] in`).
+    _attribute_name: ($) => sep1($._simple_user_type, token.immediate(".")),
     _attribute_argument: ($) =>
       choice(
         // labeled function parameters, used in custom property wrappers

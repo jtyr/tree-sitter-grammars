@@ -408,7 +408,8 @@ module.exports = grammar({
     $._word_operator_eol,
     // Never emitted. Valid only where a definition name follows a keyword
     // that Scala 2 reads as an identifier (`enum`), so the scanner lexes the
-    // name rather than an infix operator.
+    // name rather than an infix operator, and where a lone case clause can
+    // be an argument.
     $._name_gate,
     // An INDENT that opens the body of a case clause. Only the body takes
     // it, so the scanner knows the region is a case body.
@@ -486,7 +487,7 @@ module.exports = grammar({
     // `enum` opens a definition or reads as a type name until the next token.
     [$.enum_definition, $._type_identifier],
     [$._if_rest],
-    [$.repeat_pattern, $._simple_expression],
+    [$.infix_pattern, $.repeat_pattern, $._simple_expression],
     [$.tuple_pattern, $._simple_expression],
     [$.tuple_pattern, $._simple_expression, $.binding],
     // 'for'  '('  pattern  '='  _xml_open_tag  '/>'  •  ':'  … — the element
@@ -589,7 +590,9 @@ module.exports = grammar({
     [$._constructor_annotation_arguments, $.arguments],
     [$._constructor_annotation, $.applied_constructor_type],
     // type_parameters  '=>'  '{'  '}'  •  '['  …
-    [$.block, $.capture_set],
+    [$.block, $.capture_set, $.case_block],
+    // type_parameters  '=>'  identifier  '=>'  expression  •  'match'  …
+    [$.lambda_expression],
     // '{'  identifier  •  ':' starts the braced typed lambda, the block
     // lambda param, and a statement alike.
     [$._simple_expression, $._braced_typed_lambda],
@@ -1037,23 +1040,28 @@ module.exports = grammar({
       choice($._indented_template_body, $._braced_template_body),
 
     _indented_template_body: $ =>
-      prec.left(
-        PREC.control,
-        seq(
-          colonEol($),
-          $._indent,
-          choice(
-            seq(optional($.self_type), $._block),
-            // A self type with an empty body: `trait A:` + `self: B =>`
-            // followed by the next definition (or EOF). Mirrors the braced
-            // variant in _braced_template_body1.
-            $.self_type,
+      choice(
+        prec.left(
+          PREC.control,
+          seq(
+            colonEol($),
+            $._indent,
+            choice(
+              seq(optional($.self_type), $._block),
+              // A self type with an empty body: `trait A:` + `self: B =>`
+              // followed by the next definition (or EOF). Mirrors the braced
+              // variant in _braced_template_body1.
+              $.self_type,
+            ),
+            // The comma close lets a dedented `,` end a `new:` template used
+            // as an argument (`f(adapter = new: ...` + `    ,`) instead of
+            // leaving that reading to a losing GLR fork.
+            choice($._outdent, $._comma_outdent),
           ),
-          // The comma close lets a dedented `,` end a `new:` template used
-          // as an argument (`f(adapter = new: ...` + `    ,`) instead of
-          // leaving that reading to a losing GLR fork.
-          choice($._outdent, $._comma_outdent),
         ),
+        // An empty body, as in `class C:` + `end C`. The scanner gives no
+        // indent before an end marker there.
+        alias($._colon_eol, ":"),
       ),
 
     _braced_template_body: $ =>
@@ -2079,12 +2087,22 @@ module.exports = grammar({
     // Operands are _definition_pattern: a full _pattern would re-admit the
     // excluded items through the left recursion.
     infix_pattern: $ =>
-      prec.left(
-        PREC.infix,
+      choice(
+        prec.left(
+          PREC.infix,
+          seq(
+            field("left", $._definition_pattern),
+            field("operator", wordOrOpName($)),
+            field("right", $._definition_pattern),
+          ),
+        ),
+        // A repeat pattern makes the shared `*` token valid here (see
+        // infix_type). The left operand has no precedence, or the generator
+        // would drop the expression reading of `for (x = a * b`.
         seq(
           field("left", $._definition_pattern),
-          field("operator", wordOrOpName($)),
-          field("right", $._definition_pattern),
+          field("operator", alias($._asterisk, $.operator_identifier)),
+          prec.left(PREC.infix, field("right", $._definition_pattern)),
         ),
       ),
 
@@ -2230,12 +2248,16 @@ module.exports = grammar({
               anyArrow(),
               $._indentable_expression,
             ),
-            // Neither of these can open a binding list, so the branch above
-            // stays reachable without lookahead.
-            seq(
-              field("type_parameters", $.type_parameters),
-              fatArrow(),
-              choice($.parenthesized_expression, $.block),
+            // Any expression, as in the reference. An indented block would
+            // split `[T] =>` + newline + `(x: T) => x` off the branch above.
+            // Weights nest by magnitude, so -1 would not beat the outer 1.
+            prec.dynamic(
+              -2,
+              seq(
+                field("type_parameters", $.type_parameters),
+                fatArrow(),
+                $.expression,
+              ),
             ),
           ),
         ),
@@ -2573,6 +2595,8 @@ module.exports = grammar({
     /**
      *   ColonArgument     ::=  colon [LambdaStart]
      *                          (CaseClauses | Block)
+     *   LambdaStart       ::=  FunParams ('=>' | '?=>')
+     *                       |  TypTypeParamClause '=>'
      */
     colon_argument: $ =>
       prec.left(
@@ -2581,15 +2605,18 @@ module.exports = grammar({
           optional(
             field(
               "lambda_start",
-              seq(
-                choice(
-                  alias($._colon_bindings, $.bindings),
-                  $._identifier,
-                  $.wildcard,
+              choice(
+                seq(
+                  choice(
+                    alias($._colon_bindings, $.bindings),
+                    $._identifier,
+                    $.wildcard,
+                  ),
+                  // anyArrow so a context-function lambda `x ?=>` also starts
+                  // a colon argument, not only the plain `=>` form.
+                  anyArrow(),
                 ),
-                // anyArrow so a context-function lambda `x ?=>` also starts a
-                // colon argument, not only the plain `=>` form.
-                anyArrow(),
+                seq($.type_parameters, fatArrow()),
               ),
             ),
           ),
@@ -2831,7 +2858,13 @@ module.exports = grammar({
     arguments: $ =>
       seq(
         "(",
-        choice(optional($._argument_list), seq("using", $._exprs_in_parens)),
+        choice(
+          optional($._argument_list),
+          seq("using", $._exprs_in_parens),
+          // A lone case clause (SIP-75). The scanner opens its region, and the
+          // gate tells it that an indent here can only open the clause.
+          seq(optional($._name_gate), $.indented_cases),
+        ),
         ")",
       ),
 

@@ -154,6 +154,10 @@ typedef struct {
   // last line break that ended a statement or opened a region. -1 when
   // unknown.
   int16_t statement_indent;
+  // The column where the body of a same-line colon lambda starts, -1 when
+  // none is pending. CASE_INDENT_FLAG is added when the body is a case clause.
+  // AFTER_CONTROL_TAIL when the last token was a control tail gate.
+  int16_t lambda_column;
 } Scanner;
 
 void *tree_sitter_scala_external_scanner_create() {
@@ -162,6 +166,7 @@ void *tree_sitter_scala_external_scanner_create() {
   scanner->last_indentation_size = -1;
   scanner->last_column = -1;
   scanner->statement_indent = -1;
+  scanner->lambda_column = -1;
   return scanner;
 }
 
@@ -174,7 +179,7 @@ void tree_sitter_scala_external_scanner_destroy(void *payload) {
 unsigned tree_sitter_scala_external_scanner_serialize(void *payload, char *buffer) {
   Scanner *scanner = (Scanner*)payload;
 
-  if ((scanner->indents.size + 6) * sizeof(int16_t) > TREE_SITTER_SERIALIZATION_BUFFER_SIZE) {
+  if ((scanner->indents.size + 7) * sizeof(int16_t) > TREE_SITTER_SERIALIZATION_BUFFER_SIZE) {
     return 0;
   }
 
@@ -190,6 +195,8 @@ unsigned tree_sitter_scala_external_scanner_serialize(void *payload, char *buffe
   memcpy(buffer + size, &scanner->after_colon_eol, sizeof(int16_t));
   size += sizeof(int16_t);
   memcpy(buffer + size, &scanner->statement_indent, sizeof(int16_t));
+  size += sizeof(int16_t);
+  memcpy(buffer + size, &scanner->lambda_column, sizeof(int16_t));
   size += sizeof(int16_t);
 
   for (unsigned i = 0; i < scanner->indents.size; i++) {
@@ -210,6 +217,7 @@ void tree_sitter_scala_external_scanner_deserialize(void *payload, const char *b
   scanner->last_newline_count = 0;
   scanner->after_colon_eol = 0;
   scanner->statement_indent = -1;
+  scanner->lambda_column = -1;
 
   if (length == 0) {
     return;
@@ -228,6 +236,8 @@ void tree_sitter_scala_external_scanner_deserialize(void *payload, const char *b
   scanner->after_colon_eol = *(int16_t *)&buffer[size];
   size += sizeof(int16_t);
   scanner->statement_indent = *(int16_t *)&buffer[size];
+  size += sizeof(int16_t);
+  scanner->lambda_column = *(int16_t *)&buffer[size];
   size += sizeof(int16_t);
 
   unsigned count = (length - (unsigned)size) / sizeof(int16_t);
@@ -280,8 +290,14 @@ static bool advance_past_blanks(TSLexer *lexer) {
 // `match` line continues the `match`.
 #define CASE_BODY_FLAG ((int16_t)0x2000)
 
+// Marks the region of a lambda body that starts on the line of its colon.
+// scalac ends it at the line end (its SingleLineLambda region and ENDlambda).
+#define LAMBDA_LINE_FLAG ((int16_t)0x1000)
+
+#define AFTER_CONTROL_TAIL ((int16_t)-2)
+
 static inline int16_t indent_width(int16_t entry) {
-  return entry == -1 ? -1 : (int16_t)(entry & 0x1FFF);
+  return entry == -1 ? -1 : (int16_t)(entry & 0x0FFF);
 }
 
 // From anywhere on a line, the column of the next line that isn't blank, or
@@ -592,6 +608,37 @@ static bool modifier_name_follows(TSLexer *lexer) {
   return name_follows_word(lexer) && modifier_word_allowed(lexer);
 }
 
+// Where a statement can start, a soft modifier is a name unless another
+// modifier or a definition keyword follows it, so `opaque max 42` stays an
+// infix expression. Soft modifiers in between are skipped, as in
+// inModifierPosition in the reference parser.
+static bool definition_follows_modifier(TSLexer *lexer) {
+  static const char *const followers[] = {
+      "def",      "val",       "var",       "type",     "given",
+      "class",    "object",    "trait",     "enum",     "case",
+      "abstract", "final",     "sealed",    "implicit", "lazy",
+      "override", "private",   "protected", "inline"};
+  static const char *const soft_words[] = {
+      "erased", "open", "opaque", "infix", "tracked",
+      "transparent", "into", "update", "consume"};
+  for (;;) {
+    if (!name_follows_word(lexer)) {
+      return false;
+    }
+    char word[sizeof "transparent"];
+    int len = read_word(lexer, word, (int)sizeof word, NULL);
+    if (len <= 0) {
+      return false;
+    }
+    if (word_in(word, followers, sizeof(followers) / sizeof(followers[0]))) {
+      return true;
+    }
+    if (!word_in(word, soft_words, sizeof(soft_words) / sizeof(soft_words[0]))) {
+      return false;
+    }
+  }
+}
+
 // `inline` also prefixes the scrutinee of `inline 1 match`, and it can end a
 // modifier line whose definition is on the next one.
 static bool inline_modifier_follows(TSLexer *lexer) {
@@ -801,15 +848,29 @@ static bool rest_of_line_is_blank_or_comments(TSLexer *lexer) {
   }
 }
 
-// scalac's followingIsLambdaAfterColon. A type parameter clause is left out,
-// since colon_argument does not take one.
-static bool colon_lambda_follows(TSLexer *lexer, int16_t region_width) {
-  if (lexer->lookahead == '(') {
+// scalac's followingIsLambdaAfterColon. When the body starts on this line,
+// *body_column is set to its column. scalac takes such a lambda only after
+// an expression outside parentheses, and the caller tells with `same_line`.
+// A case clause it takes anywhere.
+static bool colon_lambda_follows(TSLexer *lexer, int16_t region_width,
+                                 bool same_line, int16_t *body_column) {
+  *body_column = -1;
+  if (lexer->lookahead == 'c') {
+    int16_t column = (int16_t)lexer->get_column(lexer);
+    char word[sizeof "case"];
+    if (read_word(lexer, word, (int)sizeof word, NULL) == 4 &&
+        strcmp(word, "case") == 0) {
+      *body_column = (int16_t)(column | CASE_INDENT_FLAG);
+      return true;
+    }
+  } else if (lexer->lookahead == '(' || lexer->lookahead == '[') {
+    int32_t open = lexer->lookahead;
+    int32_t close = open == '(' ? ')' : ']';
     int depth = 0;
     do {
-      if (lexer->lookahead == '(') {
+      if (lexer->lookahead == open) {
         depth++;
-      } else if (lexer->lookahead == ')') {
+      } else if (lexer->lookahead == close) {
         depth--;
       }
       advance(lexer);
@@ -837,9 +898,15 @@ static bool colon_lambda_follows(TSLexer *lexer, int16_t region_width) {
     }
     advance(lexer);
   }
-  if (is_op_char(lexer->lookahead) ||
-      !rest_of_line_is_blank_or_comments(lexer)) {
+  if (is_op_char(lexer->lookahead)) {
     return false;
+  }
+  if (!rest_of_line_is_blank_or_comments(lexer)) {
+    if (!same_line) {
+      return false;
+    }
+    *body_column = (int16_t)lexer->get_column(lexer);
+    return true;
   }
   for (;;) {
     if (lexer->eof(lexer)) {
@@ -1036,16 +1103,19 @@ static bool region_keeps_operator(Scanner *scanner, uint32_t index,
 
 // Walks the rest of the line, tracking bracket depth and skipping strings,
 // characters, back-ticks and comments. Reports whether the line ends in a
-// depth-0 `then`/`do` and whether it carries a depth-0 `=>` (Scala 2 `⇒`).
+// depth-0 `then`/`do`, whether one appears at all, whether it carries a
+// depth-0 `=>` (Scala 2 `⇒`), and whether a depth-0 `<-` comes before it.
 typedef struct {
   bool ends_conditional;
+  bool has_conditional_end;
   bool has_case_arrow;
   bool closes_bracket;
+  bool generator_first;
 } LineScan;
 
 static LineScan scan_rest_of_line(TSLexer *lexer) {
   int depth = 0;
-  LineScan r = {false, false, false};
+  LineScan r = {false, false, false, false, false};
   while (!lexer->eof(lexer) && lexer->lookahead != '\n' &&
          lexer->lookahead != '\r') {
     int32_t c = lexer->lookahead;
@@ -1097,8 +1167,10 @@ static LineScan scan_rest_of_line(TSLexer *lexer) {
       advance(lexer);
     } else if (is_op_char(c)) {
       bool starts_eq = c == '=';
+      bool starts_lt = c == '<';
       advance(lexer);
       bool second_gt = lexer->lookahead == '>';
+      bool second_minus = lexer->lookahead == '-';
       int extra = 0;
       while (is_op_char(lexer->lookahead)) {
         advance(lexer);
@@ -1108,12 +1180,17 @@ static LineScan scan_rest_of_line(TSLexer *lexer) {
       if (depth == 0 && starts_eq && second_gt && extra == 1) {
         r.has_case_arrow = true;
       }
+      if (depth == 0 && starts_lt && second_minus && extra == 1 &&
+          !r.has_case_arrow) {
+        r.generator_first = true;
+      }
       r.ends_conditional = false;
     } else if (is_word_start(c)) {
       char word[sizeof "then"];
       int len = read_word(lexer, word, (int)sizeof word, NULL);
       r.ends_conditional = depth == 0 && len > 0 &&
                            (strcmp(word, "then") == 0 || strcmp(word, "do") == 0);
+      r.has_conditional_end |= r.ends_conditional;
     } else {
       r.ends_conditional = false;
       advance(lexer);
@@ -1213,6 +1290,9 @@ bool tree_sitter_scala_external_scanner_scan(void *payload, TSLexer *lexer,
       scanner->after_colon_eol = 1;
     } else if (lexer->result_symbol != BLOCK_COMMENT) {
       scanner->after_colon_eol = 0;
+      scanner->lambda_column = lexer->result_symbol == CONTROL_TAIL_GATE
+                                   ? AFTER_CONTROL_TAIL
+                                   : -1;
     }
   }
   return res;
@@ -1305,6 +1385,22 @@ static bool scan_impl(void *payload, TSLexer *lexer,
       indentation_size++;
     }
     skip(lexer);
+  }
+
+  // The body of a same-line colon lambda opens a region here. It closes at
+  // the line end below. Its width is the enclosing one, which a case body
+  // on the next line has to pass.
+  if (scanner->lambda_column >= 0 && valid_symbols[INDENT] &&
+      !valid_symbols[ERROR_SENTINEL] && newline_count == 0 &&
+      lexer->get_column(lexer) ==
+          (uint32_t)indent_width(scanner->lambda_column)) {
+    int16_t entry = (int16_t)((prev_width < 0 ? 0 : prev_width) |
+                              LAMBDA_LINE_FLAG |
+                              (scanner->lambda_column & CASE_INDENT_FLAG));
+    array_push(&scanner->indents, entry);
+    lexer->result_symbol = INDENT;
+    LOG("    INDENT (same-line lambda)\n");
+    return true;
   }
 
   // COMMA_OUTDENT is a distinct token so tree-sitter only makes it valid
@@ -1402,6 +1498,14 @@ static bool scan_impl(void *payload, TSLexer *lexer,
           scanner->last_indentation_size != -1 &&
           prev != -1 &&
           scanner->last_indentation_size < prev_width
+        ) ||
+        // A same-line lambda under the regions closed at this line end.
+        (
+          scanner->last_indentation_size != -1 &&
+          prev != -1 && (prev & LAMBDA_LINE_FLAG) && newline_count == 0 &&
+          (lexer->eof(lexer)
+               ? scanner->last_column == -1
+               : (int16_t)lexer->get_column(lexer) == scanner->last_column)
         )
       )
   ) {
@@ -1424,6 +1528,9 @@ static bool scan_impl(void *payload, TSLexer *lexer,
   if (
       indent_valid &&
       newline_count > 0 &&
+      // Where an argument can be a lone case clause, the indent opens only
+      // that clause.
+      (!valid_symbols[NAME_GATE] || lexer->lookahead == 'c') &&
       // An indented block cannot start with a closing delimiter, e.g. the
       // `}` after an empty-bodied lambda: `foo { x =>` + newline + `}`.
       lexer->lookahead != '}' &&
@@ -1467,6 +1574,10 @@ static bool scan_impl(void *payload, TSLexer *lexer,
             "else", "catch", "finally", "yield", "do"};
         char word[sizeof "finally"];
         int len = read_word(lexer, word, (int)sizeof word, NULL);
+        if (valid_symbols[NAME_GATE] &&
+            !(len == 4 && strcmp(word, "case") == 0)) {
+          return false;
+        }
         if (len > 0 &&
             word_in(word, block_opening_stoppers,
                     sizeof(block_opening_stoppers) /
@@ -1485,6 +1596,14 @@ static bool scan_impl(void *payload, TSLexer *lexer,
             return true;
           }
           return false;
+        }
+        // scalac's trivial end. After a colon at the end of a line, a line
+        // that starts with an end marker closes an empty body.
+        if (scanner->after_colon_eol && valid_symbols[AUTOMATIC_SEMICOLON] &&
+            len == 3 && strcmp(word, "end") == 0 && name_follows_word(lexer)) {
+          scanner->statement_indent = indentation_size;
+          lexer->result_symbol = AUTOMATIC_SEMICOLON;
+          return true;
         }
         // The same-width `case` close at the bottom of scan() compares the
         // line with the enclosing region, but the `match` may not sit at that
@@ -1509,6 +1628,15 @@ static bool scan_impl(void *payload, TSLexer *lexer,
         }
         break;
       }
+      case '(':
+        // scalac reads a deeper line that starts with `(` as a continuation.
+        // Where a definition can follow but an expression cannot, this is the
+        // next clause of an extension, as `extension (x: A)` + `(using B)`.
+        if (valid_symbols[INFIX_MODIFIER] &&
+            !valid_symbols[SIMPLE_STRING_START]) {
+          return false;
+        }
+        break;
       case '|':
       case '&':
         // Nor with a leading `|`/`&` infix operator, which continues the
@@ -1537,6 +1665,8 @@ static bool scan_impl(void *payload, TSLexer *lexer,
   // that line does not start another `case` clause.
   bool case_region_close =
       newline_count > 0 && at_case_region_width(prev, indentation_size);
+  bool lambda_close =
+      newline_count > 0 && prev != -1 && (prev & LAMBDA_LINE_FLAG);
   if (valid_symbols[OUTDENT] &&
       (lexer->lookahead == 0 ||
       (
@@ -1544,7 +1674,7 @@ static bool scan_impl(void *payload, TSLexer *lexer,
         prev != -1 &&
         indentation_size < prev_width
       ) ||
-      case_region_close
+      case_region_close || lambda_close
       )
   ) {
     lexer->mark_end(lexer);
@@ -1605,7 +1735,8 @@ static bool scan_impl(void *payload, TSLexer *lexer,
                  is_leading_infix_continuation(lexer, &alone) &&
                  !scan_rest_of_line(lexer).ends_conditional;
     uint32_t top = scanner->indents.size - 1;
-    if (infix && region_keeps_operator(scanner, top, indentation_size, alone)) {
+    if (infix && !lambda_close &&
+        region_keeps_operator(scanner, top, indentation_size, alone)) {
       return false;
     }
     // scalac closes a case body's region here, but the operator then
@@ -1617,7 +1748,7 @@ static bool scan_impl(void *payload, TSLexer *lexer,
       return false;
     }
     // A same-width `case` line continues the case region instead.
-    if (case_region_close && is_case_clause_intro(lexer)) {
+    if (case_region_close && !lambda_close && is_case_clause_intro(lexer)) {
       return false;
     }
     // The cascade of outdents stops at the region that keeps the operator.
@@ -1640,6 +1771,10 @@ static bool scan_impl(void *payload, TSLexer *lexer,
     return true;
   }
 
+  // This scan did not measure the line's indentation when the count below
+  // is recovered, so that case takes the saved column.
+  int16_t line_indent = indentation_size;
+
   // Recover newline_count from the outdent reset. Skipped when this scan
   // crossed a newline itself, because the saved count belongs to an
   // earlier line at the same column.
@@ -1654,6 +1789,9 @@ static bool scan_impl(void *payload, TSLexer *lexer,
          lexer->get_column(lexer) == (uint32_t)scanner->last_column)
     ) {
       newline_count += scanner->last_newline_count;
+      if (!is_eof) {
+        line_indent = scanner->last_column;
+      }
     }
   }
   scanner->last_newline_count = 0;
@@ -1662,8 +1800,19 @@ static bool scan_impl(void *payload, TSLexer *lexer,
   // in front of a marker. Emit it when the tag word confirms the marker
   // shape.
   if (valid_symbols[END_KEYWORD] && !valid_symbols[ERROR_SENTINEL] &&
-      lexer->lookahead == 'e') {
-    if (scan_word(lexer, "end") && name_follows_word(lexer)) {
+      (lexer->lookahead == 'e' || lexer->lookahead == ';')) {
+    // scalac takes a marker after any run of separators (statSepOrEnd), so
+    // lines of semicolons before one are skipped like blanks.
+    bool line_start = true;
+    while (lexer->lookahead == ';' || is_space(lexer->lookahead)) {
+      if (lexer->lookahead == ';') {
+        line_start = false;
+      } else if (lexer->lookahead == '\n') {
+        line_start = true;
+      }
+      skip(lexer);
+    }
+    if (line_start && scan_word(lexer, "end") && name_follows_word(lexer)) {
       lexer->mark_end(lexer);
       lexer->result_symbol = END_KEYWORD;
       return true;
@@ -1692,7 +1841,7 @@ static bool scan_impl(void *payload, TSLexer *lexer,
     // The next statement starts on this line. Kept only if the semicolon
     // is: tree-sitter restores the state when the scan returns false.
     int16_t statement_indent = scanner->statement_indent;
-    scanner->statement_indent = indentation_size;
+    scanner->statement_indent = line_indent;
 
     // A `{` on the next line, deeper than the statement, continues it as
     // a block argument, as in `f(a)` + `  { b => c }`. scalac reads it so
@@ -1700,10 +1849,27 @@ static bool scan_impl(void *payload, TSLexer *lexer,
     // the region, and in Scala 2, which accepts a `{` after one line break
     // wherever it can continue the expression. POSTFIX_OP is offered only
     // where an operand just ended, which an import or a declaration isn't.
-    if (lexer->lookahead == '{' && newline_count == 1 &&
-        indentation_size > statement_indent && valid_symbols[POSTFIX_OP] &&
-        !valid_symbols[ERROR_SENTINEL]) {
+    bool deeper_operand_line =
+        newline_count == 1 && line_indent > statement_indent &&
+        valid_symbols[POSTFIX_OP] && !valid_symbols[ERROR_SENTINEL];
+    if (lexer->lookahead == '{' && deeper_operand_line) {
       return false;
+    }
+
+    // Scala 3 continues a `(` or `[` line the same way (isContinuing). Braces
+    // push no region, so statement_indent can be stale there, and it is
+    // trusted only at the width of an indented block. In a condition the
+    // line has to reach its end, as in `if xs.exists` + `  (p) then`. The
+    // line scan moves the lexer, but such a line keeps the semicolon below
+    // anyway.
+    if ((lexer->lookahead == '(' || lexer->lookahead == '[') &&
+        deeper_operand_line) {
+      if (valid_symbols[OUTDENT] && statement_indent == prev_width) {
+        return false;
+      }
+      if (valid_symbols[CONTROL_TAIL_GATE]) {
+        return !scan_rest_of_line(lexer).has_conditional_end;
+      }
     }
 
     // Probably, a multi-line field expression, e.g.
@@ -1963,9 +2129,15 @@ static bool scan_impl(void *payload, TSLexer *lexer,
         lexer->mark_end(lexer);
         // A name follows a modifier, so `def open(p)` and `a.infix` keep
         // reading as plain identifiers.
+        // A statement can start where an XML literal can and `open` can (a
+        // parameter list admits neither, and a lambda binding takes `erased`
+        // alone).
+        bool statement_start =
+            valid_symbols[XML_TAG_START] && valid_symbols[OPEN_MODIFIER];
         bool follows = modifier == INLINE_MODIFIER
                            ? inline_modifier_follows(lexer)
-                           : modifier_name_follows(lexer);
+                       : statement_start ? definition_follows_modifier(lexer)
+                                         : modifier_name_follows(lexer);
         if (follows) {
           lexer->result_symbol = modifier;
           return true;
@@ -2021,8 +2193,10 @@ static bool scan_impl(void *payload, TSLexer *lexer,
   // there, which the internal lexer would pick. The name wins only when an
   // enum header follows it (`enum =:=[A, B] {`); otherwise `enum + 1` stays
   // an infix expression. A `/` may open a comment, so names with one go to
-  // the internal lexer.
+  // the internal lexer. The gate also marks a case argument, where an indent
+  // is valid, and none is after `enum`.
   if (valid_symbols[NAME_GATE] && valid_symbols[OP_NAME] &&
+      !valid_symbols[INDENT] &&
       !valid_symbols[ERROR_SENTINEL] && is_op_char(lexer->lookahead) &&
       lexer->lookahead != '/') {
     char op[4] = {0};
@@ -2097,9 +2271,14 @@ static bool scan_impl(void *payload, TSLexer *lexer,
       // COLONeol), as is one before a lambda head that ends its line.
       // Deciding it at the token level kills the cross-newline
       // ascription fork that GLR would otherwise keep alive across the region.
+      int16_t body_column = -1;
       if (valid_symbols[COLON_EOL] &&
           (rest_of_line_is_blank_or_comments(lexer) ||
-           colon_lambda_follows(lexer, prev_width))) {
+           colon_lambda_follows(lexer, prev_width,
+                                valid_symbols[AUTOMATIC_SEMICOLON] &&
+                                    valid_symbols[POSTFIX_OP],
+                                &body_column))) {
+        scanner->lambda_column = body_column;
         lexer->result_symbol = COLON_EOL;
         return true;
       }
@@ -2481,6 +2660,28 @@ static bool scan_impl(void *payload, TSLexer *lexer,
     lexer->result_symbol = WORD_OPERATOR_EOL;
     LOG("    WORD_OPERATOR_EOL\n");
     return true;
+  }
+
+  // A case clause where an expression starts is a partial function (SIP-75),
+  // as in `val f = case (a, b) => a`. It opens the region of a case after a
+  // colon, which ends with the line. After `catch` the clause is already
+  // part of the grammar, so no region opens after a control tail.
+  if (valid_symbols[INDENT] && !valid_symbols[ERROR_SENTINEL] &&
+      newline_count == 0 && lexer->lookahead == 'c' &&
+      scanner->lambda_column != AFTER_CONTROL_TAIL) {
+    lexer->mark_end(lexer);
+    if (is_case_clause_intro(lexer)) {
+      // `for case x <- xs` is a generator.
+      LineScan line = scan_rest_of_line(lexer);
+      if (line.has_case_arrow && !line.generator_first) {
+        array_push(&scanner->indents,
+                   (int16_t)((prev_width < 0 ? 0 : prev_width) |
+                             LAMBDA_LINE_FLAG | CASE_INDENT_FLAG));
+        lexer->result_symbol = INDENT;
+        LOG("    INDENT (case expression)\n");
+        return true;
+      }
+    }
   }
 
   return false;
